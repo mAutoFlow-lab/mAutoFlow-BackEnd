@@ -12,6 +12,7 @@ app = FastAPI()
 # CORS: 프론트 도메인(.netlify.app)을 넣어준다.
 # 개발 중에는 "*" 로 열어둬도 되고, 상용에서는 꼭 도메인으로 제한하자.
 origins = [
+    "https://mautoflow-frontend.pages.dev",  # 새 Cloudflare 프론트
     "http://localhost:8000",
     "https://mautoflow-lab.netlify.app",
 ]
