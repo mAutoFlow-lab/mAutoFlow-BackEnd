@@ -2,3 +2,4 @@ fastapi
 uvicorn[standard]
 python-multipart
 python-jose[cryptography]
+python-jose[cryptography]==3.3.0
