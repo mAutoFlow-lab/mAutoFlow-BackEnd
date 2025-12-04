@@ -5,38 +5,22 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-import os
-from jose import jwt, JWTError
+# import os
+# from jose import jwt, JWTError
 
 from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_function_names
 
 app = FastAPI()
 
-# --- Supabase JWT 설정 ---
-SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET")
-JWT_ALG = "HS256"  # Supabase 기본 알고리즘
-
-def verify_access_token(access_token: str):
+def verify_access_token(access_token: str | None):
     """
-    프론트에서 넘어온 access_token 이 진짜 Supabase 가 발급한 토큰인지 확인.
-    성공하면 payload(claims)를 리턴, 실패하면 HTTP 401 에러.
+    일단은 '로그인해서 토큰을 보내고 있는지' 정도만 확인.
+    토큰 서명 검증은 나중에 Supabase 설정이 안정되면 다시 추가.
     """
     if not access_token:
         raise HTTPException(status_code=401, detail="Missing access_token")
-
-    if not SUPABASE_JWT_SECRET:
-        # Render Environment 에 값이 안 들어가 있으면 500
-        raise HTTPException(status_code=500, detail="SUPABASE_JWT_SECRET is not configured")
-
-    try:
-        payload = jwt.decode(
-            access_token,
-            SUPABASE_JWT_SECRET,
-            algorithms=[JWT_ALG],
-        )
-        return payload
-    except JWTError as e:
-        raise HTTPException(status_code=401, detail=f"Invalid access_token: {e}")
+    # 나중에 여기에 jwt.decode(...)를 다시 넣으면 됨
+    return {"token": access_token}
 
 
 # CORS: 프론트 도메인(.netlify.app)을 넣어준다.
