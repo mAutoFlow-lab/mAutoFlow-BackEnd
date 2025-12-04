@@ -4,6 +4,8 @@ from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from datetime import date
+from collections import defaultdict
 
 # import os
 # from jose import jwt, JWTError
@@ -38,6 +40,28 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+DAILY_FREE_LIMIT = 5
+FREE_NODE_LIMIT = 20
+
+_usage_counter = defaultdict(lambda: {"date": date.today(), "count": 0})
+
+def check_daily_limit(user_id: str):
+    today = date.today()
+    info = _usage_counter[user_id]
+
+    # 날짜 바뀌면 초기화
+    if info["date"] != today:
+        info["date"] = today
+        info["count"] = 0
+
+    # 무료 제한 체크
+    if info["count"] >= DAILY_FREE_LIMIT:
+        raise HTTPException(status_code=429, detail="DAILY_LIMIT_EXCEEDED")
+
+    # 정상 → 1 증가
+    info["count"] += 1
 
 
 def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
@@ -76,22 +100,39 @@ async def convert_c_text_to_mermaid(
     branch_shape: str = Form("rounded"),
     access_token: str = Form(None),   # 👈 프론트에서 보내는 토큰
 ):
-    # 1) 토큰 검증 (실패하면 여기서 401 에러 발생)
+    # 1) 토큰 검증
     user_claims = verify_access_token(access_token)
 
-    # (선택) 유저 정보 꺼내 쓰고 싶으면 여기서 꺼내면 됨
-    user_id = user_claims.get("sub")
-    user_email = user_claims.get("email")
+    # 여기서 user_id 를 하나 정해줘야 함
+    # 지금 verify_access_token 이 {"token": access_token} 만 돌려주니까
+    # 일단은 토큰 문자열 자체를 user_id 로 써도 됨.
+    user_id = user_claims["token"]
 
-    # TODO: 여기서부터 사용량/요금제 로직 넣을 수 있음
-    #   - 예: 이메일에 따라 무료/유료 플랜 구분
-    #   - 예: DB에 오늘 사용 횟수 저장/체크 등
+    # ✅ 하루 무료 사용량 체크 (백엔드 레벨)
+    check_daily_limit(user_id)
+
+    # (나중에 JWT decode 를 다시 붙이면)
+    # user_id = payload["sub"]  같은 걸로 바꾸면 됨.
 
     try:
         mermaid, func_name, node_lines = generate_mermaid_auto(
             source_code,
             branch_shape=branch_shape
         )
+
+        # 노드 수 제한 (백엔드에서도 한 번 더)
+        node_count = len(node_lines)
+        if node_count > FREE_NODE_LIMIT:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "mermaid": "",
+                    "func_name": "",
+                    "error": "TOO_MANY_NODES",
+                    "error_code": "TOO_MANY_NODES",
+                },
+            )
+        
         return JSONResponse(
             {
                 "mermaid": mermaid,
@@ -99,6 +140,9 @@ async def convert_c_text_to_mermaid(
                 "node_lines": node_lines,
             }
         )
+    except HTTPException:
+        # check_daily_limit 에서 던진 건 그대로 통과
+        raise
     except Exception as e:
         return JSONResponse({"mermaid": "", "func_name": "", "error": str(e)})
 
