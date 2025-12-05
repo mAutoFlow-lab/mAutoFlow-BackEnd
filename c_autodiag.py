@@ -290,6 +290,7 @@ def extract_function_body(code: str, func_name: str) -> str:
     """
     code_nc = remove_comments(code)
 
+    # f-string / format 안 쓰고, 문자열을 이어 붙여서 만든다.
     pattern = re.compile(
         r"""
         ^\s*                                   # 라인 시작
@@ -306,7 +307,7 @@ def extract_function_body(code: str, func_name: str) -> str:
         """,
         re.MULTILINE | re.VERBOSE,
     )
-    
+
     m = pattern.search(code_nc)
     if not m:
         raise ValueError(f"Function {func_name} not found in code.")
@@ -330,13 +331,15 @@ def extract_function_body(code: str, func_name: str) -> str:
     body = code_nc[start_brace + 1 : end_brace]
     return body
 
+
+
 def extract_function_names(code: str):
     """
     매우 단순한 함수 이름 추출기.
     - void _EntryPoint(void) { ... }
     - static void Foo(void)
     - uint8_t Bar(int x, int y)
-      이런 형태를 최대한 포용.
+    - AUTOSAR 스타일: FUNC(type, memclass) Foo(
     """
     code_nc = remove_comments(code)
 
@@ -358,16 +361,18 @@ def extract_function_names(code: str):
 
     names = list(dict.fromkeys(func_pattern.findall(code_nc)))
 
-    # 제어문/예약어는 함수에서 제외
-    keywords = {
+    # 제어문/예약어 + 대표적인 AUTOSAR 매크로는 함수에서 제외
+    blacklist = {
         "if", "else", "switch", "case", "default",
         "for", "while", "do",
         "return", "sizeof",
         "struct", "union", "enum",
         "static", "goto", "break", "continue",
-    }
-    return [n for n in names if n not in keywords]
 
+        "FUNC", "P2VAR", "P2CONST", "P2FUNC",
+    }
+
+    return [n for n in names if n not in blacklist]
 
 
 def _block_is_effectively_empty(lines, start, end):
@@ -534,7 +539,7 @@ class StructuredFlowEmitter:
         #     s = s[:max_len - 3] + "..."
 
         # ← 여기 추가
-        s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")        
+        s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
         return s.replace('"', "'")
 
