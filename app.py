@@ -51,18 +51,21 @@ def check_daily_limit(user_id: str):
     today = date.today()
     info = _usage_counter[user_id]
 
+    print(f"[USAGE] BEFORE user_id={user_id} date={info['date']} count={info['count']} today={today}")
+
     # 날짜 바뀌면 초기화
     if info["date"] != today:
+        print(f"[USAGE] RESET user_id={user_id} old_date={info['date']} new_date={today}")
         info["date"] = today
         info["count"] = 0
 
-    # 무료 제한 체크
     if info["count"] >= DAILY_FREE_LIMIT:
         print(f"[USAGE] LIMIT_EXCEEDED user_id={user_id} date={info['date']} count={info['count']}")
         raise HTTPException(status_code=429, detail="DAILY_LIMIT_EXCEEDED")
 
     info["count"] += 1
-    print(f"[USAGE] OK user_id={user_id} date={info['date']} count={info['count']}")
+    print(f"[USAGE] AFTER  user_id={user_id} date={info['date']} count={info['count']}")
+
 
 
 def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
@@ -97,6 +100,7 @@ async def health():
 
 @app.post("/api/convert_text")
 async def convert_c_text_to_mermaid(
+    print(f"[REQ] pid={os.getpid()} user_id={user_id} email={user_email}")
     source_code: str = Form(...),
     branch_shape: str = Form("rounded"),
     access_token: str = Form(None),   # 프론트에서 보내는 토큰
