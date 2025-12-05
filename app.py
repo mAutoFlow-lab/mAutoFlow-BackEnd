@@ -109,6 +109,8 @@ async def convert_c_text_to_mermaid(
     # 1) 토큰이 실제로 넘어왔는지만 확인 (로그인 여부 체크용)
     verify_access_token(access_token)
 
+    print(f"[REQ] /api/convert_text user_id={user_id} email={user_email}")
+
     # 2) 프론트에서 user_id 를 안 보내면 제한을 걸 수 없으므로 에러
     if not user_id:
         raise HTTPException(status_code=400, detail="MISSING_USER_ID")
