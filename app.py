@@ -41,31 +41,43 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DEPLOY_VERSION = "v0.0.2"
+DEPLOY_VERSION = "v0.0.3"
 DAILY_FREE_LIMIT = 5
 FREE_NODE_LIMIT = 20
 
 _usage_counter = defaultdict(lambda: {"date": date.today(), "count": 0})
 
-def check_daily_limit(user_id: str):
+def check_daily_limit(user_id: str) -> int:
+    """
+    오늘 날짜 기준으로 user_id 사용 횟수를 1 증가시키고,
+    증가된 count 를 반환한다.
+    한도를 초과하면 429 + 상세 정보를 담아 예외를 던진다.
+    """
     today = date.today()
     info = _usage_counter[user_id]
 
-    print(f"[USAGE] BEFORE user_id={user_id} date={info['date']} count={info['count']} today={today}")
-
     # 날짜 바뀌면 초기화
     if info["date"] != today:
-        print(f"[USAGE] RESET user_id={user_id} old_date={info['date']} new_date={today}")
         info["date"] = today
         info["count"] = 0
 
+    # 이미 한도 초과
     if info["count"] >= DAILY_FREE_LIMIT:
         print(f"[USAGE] LIMIT_EXCEEDED user_id={user_id} date={info['date']} count={info['count']}")
-        raise HTTPException(status_code=429, detail="DAILY_LIMIT_EXCEEDED")
+        # detail 을 문자열 대신 dict 로 내려준다
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "DAILY_LIMIT_EXCEEDED",
+                "usage_count": info["count"],
+                "daily_free_limit": DAILY_FREE_LIMIT,
+            },
+        )
 
+    # 한도 안쪽이면 1 증가
     info["count"] += 1
-    print(f"[USAGE] AFTER  user_id={user_id} date={info['date']} count={info['count']}")
-
+    print(f"[USAGE] OK user_id={user_id} date={info['date']} count={info['count']}")
+    return info["count"]  # 증가된 값 반환
 
 
 def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
@@ -116,37 +128,31 @@ async def health():
 async def convert_c_text_to_mermaid(
     source_code: str = Form(...),
     branch_shape: str = Form("rounded"),
-    access_token: str = Form(None),   # 프론트에서 보내는 토큰
+    access_token: str = Form(None),
     user_id: str | None = Form(None),
     user_email: str | None = Form(None),
 ):
-    # 1) 토큰이 실제로 넘어왔는지만 확인 (로그인 여부 체크용)
     verify_access_token(access_token)
 
     print(f"[REQ] /api/convert_text user_id={user_id} email={user_email}")
 
-    # 2) 프론트에서 user_id 를 안 보내면 제한을 걸 수 없으므로 에러
     if not user_id:
         raise HTTPException(status_code=400, detail="MISSING_USER_ID")
 
-    # 3) 테스트 계정은 무제한, 나머지는 하루 5회 제한
+    usage_count: int | None = None
+
+    # 테스트 계정은 무제한
     if user_email == "exitgiveme@gmail.com":
-        # 테스트 계정 → 제한 없음
         print("[API] test account, no daily limit")
     else:
-        check_daily_limit(user_id)
-
-
-    # (나중에 JWT decode 를 다시 붙이면)
-    # user_id = payload["sub"]  같은 걸로 바꾸면 됨.
+        usage_count = check_daily_limit(user_id)  # ★ 여기서 오늘 사용 횟수 받음
 
     try:
         mermaid, func_name, node_lines = generate_mermaid_auto(
             source_code,
-            branch_shape=branch_shape
+            branch_shape=branch_shape,
         )
 
-        # 노드 수 제한 (백엔드에서도 한 번 더)
         node_count = len(node_lines)
         if node_count > FREE_NODE_LIMIT:
             return JSONResponse(
@@ -156,14 +162,32 @@ async def convert_c_text_to_mermaid(
                     "func_name": "",
                     "error": "TOO_MANY_NODES",
                     "error_code": "TOO_MANY_NODES",
+                    # 사용량 정보도 같이 내려주고 싶으면 여기서 usage_count 포함 가능
+                    "usage_count": usage_count,
+                    "daily_free_limit": DAILY_FREE_LIMIT,
+                    "free_node_limit": FREE_NODE_LIMIT,
                 },
             )
-        
+
         return JSONResponse(
             {
                 "mermaid": mermaid,
                 "func_name": func_name,
                 "node_lines": node_lines,
+                "usage_count": usage_count,
+                "daily_free_limit": DAILY_FREE_LIMIT,
+                "free_node_limit": FREE_NODE_LIMIT,
+            }
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        return JSONResponse(
+            {
+                "mermaid": "",
+                "func_name": "",
+                "error": str(e),
             }
         )
     except HTTPException:
