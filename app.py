@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 DEPLOY_VERSION = "v0.0.1"
-DAILY_FREE_LIMIT = 2
+DAILY_FREE_LIMIT = 5
 FREE_NODE_LIMIT = 20
 
 _usage_counter = defaultdict(lambda: {"date": date.today(), "count": 0})
