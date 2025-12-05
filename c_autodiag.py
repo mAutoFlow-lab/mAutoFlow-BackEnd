@@ -1547,8 +1547,9 @@ class StructuredFlowEmitter:
             header_idxs = []
             i = body_start
             while i < body_end:
-                t = lines[i].strip()
-                if t.startswith("case ") or t.startswith("default"):
+                line = lines[i]
+                # 앞뒤 공백, 탭 등 무시하고 case/default 인지만 본다
+                if re.match(r"^\s*case\b", line) or re.match(r"^\s*default\b", line):
                     header_idxs.append(i)
                 i += 1
 
