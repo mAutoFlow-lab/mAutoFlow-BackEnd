@@ -494,6 +494,10 @@ class StructuredFlowEmitter:
         if len(s) > max_len:
             s = s[:max_len - 3] + "..."
 
+        # ← 여기 추가: Mermaid 라벨용 안전 문자 변환
+        s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
         # Mermaid 라벨에서 " 는 문제가 되므로 ' 로 치환
         return s.replace('"', "'")
 
@@ -516,6 +520,9 @@ class StructuredFlowEmitter:
         # max_len = 400  # 필요한 경우 300~500 사이에서 조절 가능
         # if len(s) > max_len:
         #     s = s[:max_len - 3] + "..."
+
+        # ← 여기 추가
+        s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")        
 
         return s.replace('"', "'")
 
