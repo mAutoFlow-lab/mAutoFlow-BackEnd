@@ -41,7 +41,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DEPLOY_VERSION = "v0.0.1"
+DEPLOY_VERSION = "v0.0.2"
 DAILY_FREE_LIMIT = 5
 FREE_NODE_LIMIT = 20
 
