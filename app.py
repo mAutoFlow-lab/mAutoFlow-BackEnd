@@ -42,7 +42,7 @@ app.add_middleware(
 )
 
 
-DAILY_FREE_LIMIT = 5
+DAILY_FREE_LIMIT = 2
 FREE_NODE_LIMIT = 20
 
 _usage_counter = defaultdict(lambda: {"date": date.today(), "count": 0})
@@ -58,14 +58,11 @@ def check_daily_limit(user_id: str):
 
     # 무료 제한 체크
     if info["count"] >= DAILY_FREE_LIMIT:
-        print(f"[USAGE] LIMIT EXCEEDED user_id={user_id} "
-              f"count={info['count']} date={info['date']}")
+        print(f"[USAGE] LIMIT_EXCEEDED user_id={user_id} date={info['date']} count={info['count']}")
         raise HTTPException(status_code=429, detail="DAILY_LIMIT_EXCEEDED")
 
-    # 정상 → 1 증가
     info["count"] += 1
-    print(f"[USAGE] OK user_id={user_id} "
-          f"count={info['count']} date={info['date']}")
+    print(f"[USAGE] OK user_id={user_id} date={info['date']} count={info['count']}")
 
 
 def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
