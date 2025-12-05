@@ -4,7 +4,7 @@ from fastapi import FastAPI, Form, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from datetime import date
+from datetime import date, datetime
 from collections import defaultdict
 
 # import os
@@ -41,7 +41,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
+DEPLOY_VERSION = "v0.0.1"
 DAILY_FREE_LIMIT = 2
 FREE_NODE_LIMIT = 20
 
@@ -91,6 +91,20 @@ def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
     }
 
     return mermaid, func_name, node_lines
+
+
+@app.get("/version")
+async def version():
+    """
+    프론트에서 백엔드 버전/제한 값을 확인할 수 있는 엔드포인트
+    """
+    return {
+        "service": "mAutoFlow backend",
+        "version": DEPLOY_VERSION,
+        "daily_free_limit": DAILY_FREE_LIMIT,
+        "free_node_limit": FREE_NODE_LIMIT,
+        "server_time": datetime.utcnow().isoformat() + "Z",
+    }
 
 
 @app.get("/")
