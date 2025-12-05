@@ -181,9 +181,12 @@ async def convert_c_text_to_mermaid(
     # 같은 코드면 사용 횟수를 올리지 않기 위해 해시를 만든다
     code_hash = make_code_hash(source_code)
 
-    # 테스트 계정은 무제한
-    if user_email == "exitgiveme@gmail.com":
-        print("[API] test account, no daily limit")
+    # 🔹 테스트 계정 여부 플래그
+    is_test_account = (user_email == "exitgiveme@gmail.com")
+
+    # 테스트 계정은 일일 회수 제한도 건너뛴다
+    if is_test_account:
+        print("[API] test account, no daily limit / no node limit")
     else:
         # 코드 해시를 기준으로, "새로운 코드"일 때만 사용량 증가
         usage_count = check_daily_limit(user_id, code_hash)
@@ -195,7 +198,9 @@ async def convert_c_text_to_mermaid(
         )
 
         node_count = len(node_lines)
-        if node_count > FREE_NODE_LIMIT:
+
+        # 일반 유저만 노드 제한 적용, 테스트 계정은 무제한
+        if (not is_test_account) and node_count > FREE_NODE_LIMIT:
             return JSONResponse(
                 status_code=400,
                 content={
