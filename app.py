@@ -58,10 +58,14 @@ def check_daily_limit(user_id: str):
 
     # 무료 제한 체크
     if info["count"] >= DAILY_FREE_LIMIT:
+        print(f"[USAGE] LIMIT EXCEEDED user_id={user_id} "
+              f"count={info['count']} date={info['date']}")
         raise HTTPException(status_code=429, detail="DAILY_LIMIT_EXCEEDED")
 
     # 정상 → 1 증가
     info["count"] += 1
+    print(f"[USAGE] OK user_id={user_id} "
+          f"count={info['count']} date={info['date']}")
 
 
 def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
@@ -112,7 +116,7 @@ async def convert_c_text_to_mermaid(
     # 3) 테스트 계정은 무제한, 나머지는 하루 5회 제한
     if user_email == "exitgiveme@gmail.com":
         # 테스트 계정 → 제한 없음
-        pass
+        print("[API] test account, no daily limit")
     else:
         check_daily_limit(user_id)
 
