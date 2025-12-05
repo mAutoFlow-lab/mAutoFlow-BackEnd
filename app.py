@@ -98,18 +98,24 @@ async def health():
 async def convert_c_text_to_mermaid(
     source_code: str = Form(...),
     branch_shape: str = Form("rounded"),
-    access_token: str = Form(None),   # 👈 프론트에서 보내는 토큰
+    access_token: str = Form(None),   # 프론트에서 보내는 토큰
+    user_id: str | None = Form(None),
+    user_email: str | None = Form(None),
 ):
-    # 1) 토큰 검증
-    user_claims = verify_access_token(access_token)
+    # 1) 토큰이 실제로 넘어왔는지만 확인 (로그인 여부 체크용)
+    verify_access_token(access_token)
 
-    # 여기서 user_id 를 하나 정해줘야 함
-    # 지금 verify_access_token 이 {"token": access_token} 만 돌려주니까
-    # 일단은 토큰 문자열 자체를 user_id 로 써도 됨.
-    user_id = user_claims["token"]
+    # 2) 프론트에서 user_id 를 안 보내면 제한을 걸 수 없으므로 에러
+    if not user_id:
+        raise HTTPException(status_code=400, detail="MISSING_USER_ID")
 
-    # ✅ 하루 무료 사용량 체크 (백엔드 레벨)
-    check_daily_limit(user_id)
+    # 3) 테스트 계정은 무제한, 나머지는 하루 5회 제한
+    if user_email == "exitgiveme@gmail.com":
+        # 테스트 계정 → 제한 없음
+        pass
+    else:
+        check_daily_limit(user_id)
+
 
     # (나중에 JWT decode 를 다시 붙이면)
     # user_id = payload["sub"]  같은 걸로 바꾸면 됨.
