@@ -100,7 +100,6 @@ async def health():
 
 @app.post("/api/convert_text")
 async def convert_c_text_to_mermaid(
-    print(f"[REQ] pid={os.getpid()} user_id={user_id} email={user_email}")
     source_code: str = Form(...),
     branch_shape: str = Form("rounded"),
     access_token: str = Form(None),   # 프론트에서 보내는 토큰
