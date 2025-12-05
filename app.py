@@ -7,6 +7,8 @@ import uvicorn
 from datetime import date, datetime
 from collections import defaultdict
 
+import hashlib
+import datetime as dt
 # import os
 # from jose import jwt, JWTError
 
@@ -45,26 +47,50 @@ DEPLOY_VERSION = "v0.0.3"
 DAILY_FREE_LIMIT = 5
 FREE_NODE_LIMIT = 20
 
-_usage_counter = defaultdict(lambda: {"date": date.today(), "count": 0})
+# user_id 별로 오늘 날짜, 사용 횟수, 마지막 코드 해시를 기억
+_usage_counter = defaultdict(
+    lambda: {"date": date.today(), "count": 0, "last_code_hash": None}
+)
 
-def check_daily_limit(user_id: str) -> int:
+def normalize_source(code: str) -> str:
     """
-    오늘 날짜 기준으로 user_id 사용 횟수를 1 증가시키고,
-    증가된 count 를 반환한다.
-    한도를 초과하면 429 + 상세 정보를 담아 예외를 던진다.
+    같은 함수인데 공백만 조금 바뀐 경우는 동일 코드로 취급하기 위해
+    라인 끝 공백을 제거하고 앞뒤 공백을 정리한다.
+    """
+    lines = code.strip().splitlines()
+    lines = [ln.rstrip() for ln in lines]
+    return "\n".join(lines)
+
+
+def make_code_hash(code: str) -> str:
+    norm = normalize_source(code)
+    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
+def check_daily_limit(user_id: str, code_hash: str) -> int:
+    """
+    - user_id 기준으로 오늘 날짜의 사용량을 관리한다.
+    - 같은 코드(code_hash)가 들어오면 count 를 증가시키지 않는다.
+    - 다른 코드가 들어왔고, 이미 DAILY_FREE_LIMIT 만큼 썼다면 429를 던진다.
     """
     today = date.today()
     info = _usage_counter[user_id]
 
-    # 날짜 바뀌면 초기화
+    # 날짜가 바뀌면 카운터 리셋
     if info["date"] != today:
         info["date"] = today
         info["count"] = 0
+        info["last_code_hash"] = None
 
-    # 이미 한도 초과
-    if info["count"] >= DAILY_FREE_LIMIT:
-        print(f"[USAGE] LIMIT_EXCEEDED user_id={user_id} date={info['date']} count={info['count']}")
-        # detail 을 문자열 대신 dict 로 내려준다
+    last_hash = info.get("last_code_hash")
+    is_new_code = (last_hash != code_hash)
+
+    # 새로운 코드인데, 이미 한도까지 사용한 경우에만 막는다
+    if is_new_code and info["count"] >= DAILY_FREE_LIMIT:
+        print(
+            f"[USAGE] LIMIT_EXCEEDED user_id={user_id} "
+            f"date={info['date']} count={info['count']}"
+        )
         raise HTTPException(
             status_code=429,
             detail={
@@ -74,10 +100,21 @@ def check_daily_limit(user_id: str) -> int:
             },
         )
 
-    # 한도 안쪽이면 1 증가
-    info["count"] += 1
-    print(f"[USAGE] OK user_id={user_id} date={info['date']} count={info['count']}")
-    return info["count"]  # 증가된 값 반환
+    # 새로운 코드면 +1, 같은 코드면 카운트 유지
+    if is_new_code:
+        info["count"] += 1
+        info["last_code_hash"] = code_hash
+        print(
+            f"[USAGE] OK (new code) user_id={user_id} "
+            f"date={info['date']} count={info['count']}"
+        )
+    else:
+        print(
+            f"[USAGE] OK (same code) user_id={user_id} "
+            f"date={info['date']} count={info['count']}"
+        )
+
+    return info["count"]
 
 
 def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
@@ -141,11 +178,15 @@ async def convert_c_text_to_mermaid(
 
     usage_count: int | None = None
 
+    # 같은 코드면 사용 횟수를 올리지 않기 위해 해시를 만든다
+    code_hash = make_code_hash(source_code)
+
     # 테스트 계정은 무제한
     if user_email == "exitgiveme@gmail.com":
         print("[API] test account, no daily limit")
     else:
-        usage_count = check_daily_limit(user_id)  # ★ 여기서 오늘 사용 횟수 받음
+        # 코드 해시를 기준으로, "새로운 코드"일 때만 사용량 증가
+        usage_count = check_daily_limit(user_id, code_hash)
 
     try:
         mermaid, func_name, node_lines = generate_mermaid_auto(
