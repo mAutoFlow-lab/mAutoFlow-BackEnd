@@ -291,11 +291,18 @@ def extract_function_body(code: str, func_name: str) -> str:
     code_nc = remove_comments(code)
 
     pattern = re.compile(
-        rf"""
+        r"""
         ^\s*                                   # 라인 시작
-        (?:[A-Za-z_][\w\s\*\(\)]*\s+)?         # 반환형/수식어 (optional)
-        {re.escape(func_name)}\s*\([^)]*\)     # 함수 이름 + 인자
-        \s*(?:\{{|\n\s*\{{)                    # 같은 줄 / 다음 줄의 {{
+        (?:[A-Za-z_][\w\s\*\(\),\)]*\s+)?      # 반환형/수식어 (optional, FUNC(...) 포함)
+        """ + re.escape(func_name) +
+        r"""
+        \s*\(                                  # 인자 리스트 시작 '('
+            (?:                                # 인자 리스트 내용:
+                [^()]                          #   - 일반 문자(괄호 제외)
+              | \([^()]*\)                     #   - 한 번 더 중첩된 (...) 블록
+            )*
+        \)                                     # 인자 리스트 끝 ')'
+        \s*(?:\{|\n\s*\{)                      # 같은 줄 / 다음 줄의 '{'
         """,
         re.MULTILINE | re.VERBOSE,
     )
@@ -336,9 +343,14 @@ def extract_function_names(code: str):
     func_pattern = re.compile(
         r"""
         ^\s*                                   # 라인 시작 + 앞 공백
-        (?:[A-Za-z_][\w\s\*\(\)]*\s+)?         # 반환형/수식어 (optional)
-        ([A-Za-z_]\w*)                         # 함수 이름
-        \s*\([^;]*\)                           # 파라미터 리스트
+        (?:[A-Za-z_][\w\s\*\(\),\)]*\s+)?      # 반환형/수식어 (FUNC(...) 포함, optional)
+        ([A-Za-z_]\w*)                         # 함수 이름 후보
+        \s*\(                                  # '('
+            (?:                                # 파라미터 내용:
+                [^()]                          #   - 괄호 제외 아무 문자
+              | \([^()]*\)                     #   - 한 번 더 중첩된 괄호 블록
+            )*
+        \)                                     # ')'
         \s*(?:\{|\n\s*\{)                      # 같은 줄 또는 다음 줄의 '{'
         """,
         re.MULTILINE | re.VERBOSE,
