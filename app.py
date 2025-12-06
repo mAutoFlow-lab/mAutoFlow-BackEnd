@@ -118,13 +118,50 @@ def check_daily_limit(user_id: str, code_hash: str) -> int:
 
 
 def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
+    """
+    1) 코드에서 함수 목록을 전부 찾는다.
+    2) main이 있으면 main, 없으면 첫 번째 함수를 우선 시도한다.
+    3) 선택한 함수에서 본문 추출이 실패하면, 나머지 함수들까지 순차적으로 시도.
+    4) 결국 아무 함수도 본문 추출이 안 되면, 어떤 함수들을 발견했는지까지 에러 메시지에 포함.
+    """
+    # 1) 함수 목록 탐색
     func_list = extract_function_names(source_code)
+    print("[DEBUG] detected functions:", func_list)  # 디버그용
+
     if not func_list:
-        raise ValueError("The function could not be found in the code.")
-    func_name = "main" if "main" in func_list else func_list[0]
+        # 아예 함수 정의를 찾지 못한 경우
+        raise ValueError(
+            "The function could not be found in the code. "
+            "Check that you pasted the full function definition (including its header with '{')."
+        )
 
-    body = extract_function_body(source_code, func_name)
+    # 2) 우선 시도할 함수 선택
+    preferred = "main" if "main" in func_list else func_list[0]
 
+    tried = []
+    last_err = None
+    body = None
+    func_name = None
+
+    # 3) 우선 함수 + 나머지 함수들 순서대로 시도
+    for name in [preferred] + [f for f in func_list if f != preferred]:
+        tried.append(name)
+        try:
+            body = extract_function_body(source_code, name)
+            func_name = name
+            break
+        except Exception as e:
+            last_err = e
+            continue
+
+    if body is None or func_name is None:
+        # 어떤 함수에서도 본문을 못 뽑은 경우
+        msg = f"Failed to extract function body. Tried: {tried}"
+        if last_err is not None:
+            msg += f" | Last error: {last_err}"
+        raise ValueError(msg)
+
+    # 4) 여기부터는 기존 로직 그대로
     body_index = source_code.find(body)
     if body_index == -1:
         body_start_line = 0
@@ -236,12 +273,6 @@ async def convert_c_text_to_mermaid(
                 "error": str(e),
             }
         )
-    except HTTPException:
-        # check_daily_limit 에서 던진 건 그대로 통과
-        raise
-    except Exception as e:
-        return JSONResponse({"mermaid": "", "func_name": "", "error": str(e)})
-
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
