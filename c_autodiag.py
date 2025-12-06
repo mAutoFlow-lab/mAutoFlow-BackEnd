@@ -292,20 +292,14 @@ def extract_function_body(code: str, func_name: str) -> str:
 
     # f-string / format 안 쓰고, 문자열을 이어 붙여서 만든다.
     pattern = re.compile(
-        r"""
-        ^\s*                                   # 라인 시작
-        (?:[A-Za-z_][\w\s\*\(\),\)]*\s+)?      # 반환형/수식어 (optional, FUNC(...) 포함)
-        """ + re.escape(func_name) +
-        r"""
-        \s*\(                                  # 인자 리스트 시작 '('
-            (?:                                # 인자 리스트 내용:
-                [^()]                          #   - 일반 문자(괄호 제외)
-              | \([^()]*\)                     #   - 한 번 더 중첩된 (...) 블록
-            )*
-        \)                                     # 인자 리스트 끝 ')'
-        \s*(?:\{|\n\s*\{)                      # 같은 줄 / 다음 줄의 '{'
-        """,
-        re.MULTILINE | re.VERBOSE,
+        r'^\s*'
+        r'(?:FUNC\s*\([^)]*\)\s*)?'        # AUTOSAR FUNC(...) (옵션)
+        r'(?:[A-Za-z_][\w\s\*]*\s+)?'      # 반환형/수식어 (옵션)
+        + re.escape(func_name) +
+        r'\s*\('
+        r'(?:[^()]|\([^()]*\))*'
+        r'\)\s*(?:\{|\n\s*\{)',
+        re.MULTILINE,
     )
 
     m = pattern.search(code_nc)
@@ -345,16 +339,14 @@ def extract_function_names(code: str):
 
     func_pattern = re.compile(
         r"""
-        ^\s*                                   # 라인 시작 + 앞 공백
-        (?:[A-Za-z_][\w\s\*\(\),\)]*\s+)?      # 반환형/수식어 (FUNC(...) 포함, optional)
-        ([A-Za-z_]\w*)                         # 함수 이름 후보
-        \s*\(                                  # '('
-            (?:                                # 파라미터 내용:
-                [^()]                          #   - 괄호 제외 아무 문자
-              | \([^()]*\)                     #   - 한 번 더 중첩된 괄호 블록
-            )*
-        \)                                     # ')'
-        \s*(?:\{|\n\s*\{)                      # 같은 줄 또는 다음 줄의 '{'
+        ^\s*
+        (?:FUNC\s*\([^)]*\)\s*)?          # AUTOSAR FUNC(type, memclass) 매크로 (옵션)
+        (?:[A-Za-z_][\w\s\*]*\s+)?        # 일반 반환형/수식어 (옵션)
+        ([A-Za-z_]\w*)                    # 함수 이름
+        \s*\(
+            (?:[^()]|\([^()]*\))*         # 파라미터
+        \)
+        \s*(?:\{|\n\s*\{)                 # { 또는 다음 줄의 {
         """,
         re.MULTILINE | re.VERBOSE,
     )
