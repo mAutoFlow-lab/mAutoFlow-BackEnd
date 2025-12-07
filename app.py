@@ -187,7 +187,7 @@ def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
     """
     # 1) 함수 목록 탐색
     func_list = extract_function_names(source_code)
-    print("[DEBUG] detected functions:", func_list)  # 디버그용
+    # print("[DEBUG] detected functions:", func_list)  # 디버그용
 
     if not func_list:
         # 아예 함수 정의를 찾지 못한 경우
