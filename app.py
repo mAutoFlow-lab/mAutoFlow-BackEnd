@@ -272,7 +272,7 @@ async def convert_c_text_to_mermaid(
         usage_count = check_daily_limit(user_id, code_hash)
 
     try:
-        mermaid, func_name, node_lines = generate_mermaid_auto(
+        mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
             source_code,
             branch_shape=branch_shape,
         )
