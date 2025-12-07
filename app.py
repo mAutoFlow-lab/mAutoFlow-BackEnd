@@ -69,42 +69,59 @@ def make_code_hash(code: str) -> str:
 
 def extract_full_function_signature(source_code: str, func_name: str) -> str:
     """
-    소스 코드 전체에서 해당 함수의 '선언부'를 최대한 그대로 찾아서 반환.
-    예)
-      static int Foo(int a, int b)
-    이런 식으로 리턴타입 + 이름 + 인자까지 포함된 한 줄(또는 멀티라인)을 정리해서 리턴.
+    소스 코드 전체에서 해당 함수의 '선언부'를 최대한 찾아서 반환.
+    - FUNC(...) + 함수 이름 + 매개변수 전체를 한 줄로 정리
+    - AUTOSAR 스타일(중첩 괄호 포함)도 처리
     """
-    # 멀티라인 함수 선언도 잡기 위해, 줄바꿈을 공백으로 한 번 눌러서 찾는다.
-    # (너무 복잡하게 안 가고, 일단 실용적인 수준으로만)
-    code_one_line = re.sub(r"\s+", " ", source_code)
+    # 모든 공백/줄바꿈을 하나의 공백으로 눌러서 단일 문자열로 만든다.
+    flat = re.sub(r"\s+", " ", source_code)
 
-    # AUTOSAR FUNC(...) 도 대충 지원
-    pattern = re.compile(
-        r"""
-        (                               # 전체 시그니처 캡쳐
-            (?:FUNC\s*\([^)]*\)\s*)?     #   AUTOSAR FUNC(...) (옵션)
-            [A-Za-z_][\w\s\*\(\)]*?      #   리턴타입/수식어(대충)
-            \b""" + re.escape(func_name) + r"""\s*  #   함수 이름
-            \(
-                [^)]*
-            \)
-        )
-        """,
-        re.VERBOSE,
-    )
-
-    m = pattern.search(code_one_line)
+    # func_name( 위치 찾기
+    pattern = r"\b" + re.escape(func_name) + r"\s*\("
+    m = re.search(pattern, flat)
     if not m:
-        # 못 찾으면 fallback: func_name()
         return f"{func_name}()"
 
-    sig = m.group(1).strip()
+    # 함수 이름 뒤의 '(' 위치
+    paren_start = flat.find("(", m.start())
+    if paren_start == -1:
+        return f"{func_name}()"
 
-    # 공백 정리
-    sig = re.sub(r"\s+", " ", sig).strip()
+    # 괄호 깊이 카운트하면서, 매개변수 리스트의 마지막 ')' 위치 찾기
+    depth = 0
+    end_idx = None
+    for i in range(paren_start, len(flat)):
+        ch = flat[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                end_idx = i
+                break
+
+    if end_idx is None:
+        # 균형이 맞지 않으면 fallback
+        return f"{func_name}()"
+
+    # AUTOSAR FUNC(...) 포함을 위해, 함수 이름 앞쪽에서 FUNC( 를 찾아본다.
+    search_window_start = max(0, m.start() - 200)  # 뒤로 200자 정도만 본다.
+    window = flat[search_window_start:m.start()]
+    macro_pos = window.rfind("FUNC(")
+
+    if macro_pos != -1:
+        sig_start = search_window_start + macro_pos
+    else:
+        sig_start = m.start()
+
+    sig = flat[sig_start:end_idx + 1].strip()
+
+    # 너무 길면 뒤를 잘라서 ... 처리 (보기용)
+    MAX_LEN = 220
+    if len(sig) > MAX_LEN:
+        sig = sig[:200].rstrip() + " ..."
 
     return sig
-
 
 def check_daily_limit(user_id: str, code_hash: str) -> int:
     """
@@ -284,21 +301,34 @@ async def convert_c_text_to_mermaid(
             style = "short"
 
         # 화면에 보여줄 이름 (헤더 + 다이어그램 start/end 노드용)
-        display_name = func_name
-        if style == "full" and full_signature:
-            display_name = full_signature
+        display_short = (func_name or "").strip()
+        display_full  = (full_signature or "").strip()
+
+        if style == "full" and display_full:
+            display_name = display_full
+        else:
+            display_name = display_short
 
         # Mermaid 코드의 start/end 라벨 치환
-        short_start = f"start {func_name}()"
-        full_start  = f"start {display_name}"
-        if short_start in mermaid:
-            mermaid = mermaid.replace(short_start, full_start, 1)
-
-        short_end = f"end {func_name}()"
-        full_end  = f"end {display_name}"
-        if short_end in mermaid:
-            mermaid = mermaid.replace(short_end, full_end, 1)
+        #   - 첫 번째 'start ...' 라인 전체를 start {display_name} 으로 교체
+        #   - 첫 번째 'end ...'   라인 전체를 end   {display_name} 으로 교체
+        if display_name:
+            mermaid = re.sub(
+                r"^start[^\n]*",
+                f"start {display_name}",
+                mermaid,
+                count=1,
+                flags=re.MULTILINE,
+            )
+            mermaid = re.sub(
+                r"^end[^\n]*",
+                f"end {display_name}",
+                mermaid,
+                count=1,
+                flags=re.MULTILINE,
+            )
         # -----------------------------------------------
+
 
         node_count = len(node_lines)
 
