@@ -117,9 +117,9 @@ def extract_full_function_signature(source_code: str, func_name: str) -> str:
     sig = flat[sig_start:end_idx + 1].strip()
 
     # 너무 길면 뒤를 잘라서 ... 처리 (보기용)
-    MAX_LEN = 220
-    if len(sig) > MAX_LEN:
-        sig = sig[:200].rstrip() + " ..."
+    # MAX_LEN = 220
+    # if len(sig) > MAX_LEN:
+    #     sig = sig[:200].rstrip() + " ..."
 
     return sig
 
@@ -310,24 +310,15 @@ async def convert_c_text_to_mermaid(
             display_name = display_short
 
         # Mermaid 코드의 start/end 라벨 치환
-        #   - 첫 번째 'start ...' 라인 전체를 start {display_name} 으로 교체
-        #   - 첫 번째 'end ...'   라인 전체를 end   {display_name} 으로 교체
-        if display_name:
-            mermaid = re.sub(
-                r"^start[^\n]*",
-                f"start {display_name}",
-                mermaid,
-                count=1,
-                flags=re.MULTILINE,
-            )
-            mermaid = re.sub(
-                r"^end[^\n]*",
-                f"end {display_name}",
-                mermaid,
-                count=1,
-                flags=re.MULTILINE,
-            )
+        #   - 노드 라벨 안에 들어있는 "start 함수이름()" / "end 함수이름()" 텍스트만 교체
+        if display_name and func_name:
+            pattern_start = r"start\s+" + re.escape(func_name) + r"\s*\(\)?"
+            pattern_end   = r"end\s+"   + re.escape(func_name) + r"\s*\(\)?"
+
+            mermaid = re.sub(pattern_start, f"start {display_name}", mermaid)
+            mermaid = re.sub(pattern_end,   f"end {display_name}",   mermaid)
         # -----------------------------------------------
+
 
 
         node_count = len(node_lines)
