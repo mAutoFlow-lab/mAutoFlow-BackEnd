@@ -70,8 +70,8 @@ def make_code_hash(code: str) -> str:
 def extract_full_function_signature(source_code: str, func_name: str) -> str:
     """
     소스 코드 전체에서 해당 함수의 '선언부'를 최대한 찾아서 반환.
-    - FUNC(...) + 함수 이름 + 매개변수 전체를 한 줄로 정리
-    - AUTOSAR 스타일(중첩 괄호 포함)도 처리
+    - AUTOSAR FUNC(...)인 경우: FUNC(...) + 이름 + 매개변수 전체
+    - 일반 C 함수인 경우: static/inline/반환타입까지 포함한 시그니처
     """
     # 모든 공백/줄바꿈을 하나의 공백으로 눌러서 단일 문자열로 만든다.
     flat = re.sub(r"\s+", " ", source_code)
@@ -109,19 +109,24 @@ def extract_full_function_signature(source_code: str, func_name: str) -> str:
     window = flat[search_window_start:m.start()]
     macro_pos = window.rfind("FUNC(")
 
+    # 1) AUTOSAR FUNC(...) 패턴: FUNC(...) 부터 끝까지 사용
     if macro_pos != -1:
         sig_start = search_window_start + macro_pos
-    else:
-        sig_start = m.start()
+        sig = flat[sig_start:end_idx + 1].strip()
+        return sig
 
-    sig = flat[sig_start:end_idx + 1].strip()
+    # 2) 일반 C 함수: 반환 타입까지 포함한 시그니처를 정규식으로 시도
+    m2 = re.search(
+        r"([A-Za-z_][\w\s\*\(\)]*\b" + re.escape(func_name) + r"\s*\([^)]*\))",
+        flat,
+    )
+    if m2:
+        return m2.group(1).strip()
 
-    # 너무 길면 뒤를 잘라서 ... 처리 (보기용)
-    # MAX_LEN = 220
-    # if len(sig) > MAX_LEN:
-    #     sig = sig[:200].rstrip() + " ..."
-
+    # 3) 그래도 못 찾으면, 최소한 이름+인자만이라도 반환
+    sig = flat[m.start():end_idx + 1].strip()
     return sig
+
 
 def check_daily_limit(user_id: str, code_hash: str) -> int:
     """
