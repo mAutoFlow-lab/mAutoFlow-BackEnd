@@ -245,6 +245,7 @@ async def health():
 async def convert_c_text_to_mermaid(
     source_code: str = Form(...),
     branch_shape: str = Form("rounded"),
+    func_name_style: str = Form("short"),
     access_token: str = Form(None),
     user_id: str | None = Form(None),
     user_email: str | None = Form(None),
@@ -276,6 +277,28 @@ async def convert_c_text_to_mermaid(
             source_code,
             branch_shape=branch_shape,
         )
+
+        # ----- 함수 이름 표시 스타일 적용 (Short / Full) -----
+        style = (func_name_style or "short").lower()
+        if style not in ("short", "full"):
+            style = "short"
+
+        # 화면에 보여줄 이름 (헤더 + 다이어그램 start/end 노드용)
+        display_name = func_name
+        if style == "full" and full_signature:
+            display_name = full_signature
+
+        # Mermaid 코드의 start/end 라벨 치환
+        short_start = f"start {func_name}()"
+        full_start  = f"start {display_name}"
+        if short_start in mermaid:
+            mermaid = mermaid.replace(short_start, full_start, 1)
+
+        short_end = f"end {func_name}()"
+        full_end  = f"end {display_name}"
+        if short_end in mermaid:
+            mermaid = mermaid.replace(short_end, full_end, 1)
+        # -----------------------------------------------
 
         node_count = len(node_lines)
 
