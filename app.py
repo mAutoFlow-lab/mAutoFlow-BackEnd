@@ -9,6 +9,7 @@ from collections import defaultdict
 
 import hashlib
 import datetime as dt
+import re
 # import os
 # from jose import jwt, JWTError
 
@@ -65,6 +66,44 @@ def normalize_source(code: str) -> str:
 def make_code_hash(code: str) -> str:
     norm = normalize_source(code)
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+def extract_full_function_signature(source_code: str, func_name: str) -> str:
+    """
+    소스 코드 전체에서 해당 함수의 '선언부'를 최대한 그대로 찾아서 반환.
+    예)
+      static int Foo(int a, int b)
+    이런 식으로 리턴타입 + 이름 + 인자까지 포함된 한 줄(또는 멀티라인)을 정리해서 리턴.
+    """
+    # 멀티라인 함수 선언도 잡기 위해, 줄바꿈을 공백으로 한 번 눌러서 찾는다.
+    # (너무 복잡하게 안 가고, 일단 실용적인 수준으로만)
+    code_one_line = re.sub(r"\s+", " ", source_code)
+
+    # AUTOSAR FUNC(...) 도 대충 지원
+    pattern = re.compile(
+        r"""
+        (                               # 전체 시그니처 캡쳐
+            (?:FUNC\s*\([^)]*\)\s*)?     #   AUTOSAR FUNC(...) (옵션)
+            [A-Za-z_][\w\s\*\(\)]*?      #   리턴타입/수식어(대충)
+            \b""" + re.escape(func_name) + r"""\s*  #   함수 이름
+            \(
+                [^)]*
+            \)
+        )
+        """,
+        re.VERBOSE,
+    )
+
+    m = pattern.search(code_one_line)
+    if not m:
+        # 못 찾으면 fallback: func_name()
+        return f"{func_name}()"
+
+    sig = m.group(1).strip()
+
+    # 공백 정리
+    sig = re.sub(r"\s+", " ", sig).strip()
+
+    return sig
 
 
 def check_daily_limit(user_id: str, code_hash: str) -> int:
@@ -168,6 +207,9 @@ def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
     else:
         body_start_line = source_code[:body_index].count("\n")
 
+    # 여기서 풀 시그니처 생성
+    full_signature = extract_full_function_signature(source_code, func_name)
+
     emitter = StructuredFlowEmitter(func_name, branch_shape=branch_shape)
     mermaid = emitter.emit_from_body(body)
 
@@ -176,7 +218,8 @@ def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
         for nid, line_idx in emitter.node_line_map.items()
     }
 
-    return mermaid, func_name, node_lines
+    # full_signature 를 함께 리턴
+    return mermaid, func_name, node_lines, full_signature
 
 
 @app.get("/version")
@@ -256,6 +299,7 @@ async def convert_c_text_to_mermaid(
             {
                 "mermaid": mermaid,
                 "func_name": func_name,
+                "full_signature": full_signature,   # 추가
                 "node_lines": node_lines,
                 "usage_count": usage_count,
                 "daily_free_limit": DAILY_FREE_LIMIT,
