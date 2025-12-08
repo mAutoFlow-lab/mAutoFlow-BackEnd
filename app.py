@@ -13,11 +13,24 @@ import hmac        # webhook 검증용
 import datetime as dt
 import re
 import requests
+from supabase import create_client, Client
 
 
 from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_function_names
 
 app = FastAPI()
+
+# --- Supabase client 설정 ---
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+    # 배포 환경 변수 설정이 안 되어 있으면 바로 에러 나게
+    raise RuntimeError("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY 환경 변수가 설정되지 않았습니다.")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+# --- 여기까지 ---
+
 
 @app.post("/webhook/lemon")
 async def lemon_webhook(request: Request):
