@@ -15,7 +15,6 @@ import re
 import requests
 from supabase import create_client, Client
 
-
 from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_function_names
 
 app = FastAPI()
@@ -24,12 +23,16 @@ app = FastAPI()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 
-if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-    # 배포 환경 변수 설정이 안 되어 있으면 바로 에러 나게
-    raise RuntimeError("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY 환경 변수가 설정되지 않았습니다.")
+supabase: Client | None = None
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+    supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+else:
+    # 로컬 테스트나 설정 실수 시 바로 죽지 말고 로그만 남김
+    # (완전 엄격하게 하고 싶으면 여기서 RuntimeError를 다시 써도 됨)
+    print("[WARN] SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되지 않았습니다.")
 # --- 여기까지 ---
+
 
 
 @app.post("/webhook/lemon")
@@ -48,7 +51,7 @@ async def lemon_webhook(request: Request):
         hashlib.sha256
     ).hexdigest()
 
-    if not hmac.compare_digest(signature, expected_sig):
+    if not hmac.compare_digest(signature or "", expected_sig):
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     payload = await request.json()
@@ -87,52 +90,34 @@ async def lemon_webhook(request: Request):
     return {"ok": True}
 
 
-# ================= Supabase 구독 정보 조회 설정 =================
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-
-
 def get_user_subscription(user_id: str | None):
-    """
-    Supabase public.subscriptions 테이블에서
-    해당 user_id의 구독 정보를 한 건 가져온다.
-    - row가 없으면 None 반환
-    """
     if not user_id:
         return None
 
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        print("[SUBS] SUPABASE_URL or SERVICE_ROLE_KEY not set, skip subscription check")
+    if supabase is None:
+        print("[SUBS] supabase client not initialized")
         return None
-
-    url = f"{SUPABASE_URL}/rest/v1/subscriptions"
-    headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-    }
-    params = {
-        "user_id": f"eq.{user_id}",
-        "select": "plan_name,status,is_trial,trial_ends_at,renews_at,ends_at",
-        "limit": 1,
-    }
 
     try:
-        resp = requests.get(url, headers=headers, params=params, timeout=5)
+        resp = (
+            supabase
+            .table("subscriptions")
+            .select("plan_name,status,is_trial,trial_ends_at,renews_at,ends_at")
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute()
+        )
     except Exception as e:
-        print("[SUBS] request error:", e)
+        print("[SUBS] supabase query error:", e)
         return None
 
-    if not resp.ok:
-        print("[SUBS] supabase error:", resp.status_code, resp.text)
+    rows = getattr(resp, "data", None) or []
+    if not rows:
         return None
 
-    data = resp.json()
-    if not data:
-        return None
+    print("[SUBS] subscription row:", rows[0])
+    return rows[0]
 
-    print("[SUBS] subscription row:", data[0])
-    return data[0]
 
 def verify_access_token(access_token: str | None):
     """
