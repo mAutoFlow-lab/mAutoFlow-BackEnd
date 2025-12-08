@@ -7,15 +7,63 @@ import uvicorn
 from datetime import date, datetime
 from collections import defaultdict
 
+import os
 import hashlib
 import datetime as dt
 import re
-# import os
-# from jose import jwt, JWTError
+import requests
+
 
 from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_function_names
 
 app = FastAPI()
+
+# ================= Supabase 구독 정보 조회 설정 =================
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+
+def get_user_subscription(user_id: str | None):
+    """
+    Supabase public.subscriptions 테이블에서
+    해당 user_id의 구독 정보를 한 건 가져온다.
+    - row가 없으면 None 반환
+    """
+    if not user_id:
+        return None
+
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        print("[SUBS] SUPABASE_URL or SERVICE_ROLE_KEY not set, skip subscription check")
+        return None
+
+    url = f"{SUPABASE_URL}/rest/v1/subscriptions"
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+    }
+    params = {
+        "user_id": f"eq.{user_id}",
+        "select": "plan_name,status,is_trial,trial_ends_at,renews_at,ends_at",
+        "limit": 1,
+    }
+
+    try:
+        resp = requests.get(url, headers=headers, params=params, timeout=5)
+    except Exception as e:
+        print("[SUBS] request error:", e)
+        return None
+
+    if not resp.ok:
+        print("[SUBS] supabase error:", resp.status_code, resp.text)
+        return None
+
+    data = resp.json()
+    if not data:
+        return None
+
+    print("[SUBS] subscription row:", data[0])
+    return data[0]
 
 def verify_access_token(access_token: str | None):
     """
