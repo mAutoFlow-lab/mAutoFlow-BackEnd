@@ -506,8 +506,33 @@ async def convert_c_text_to_mermaid(
     # 같은 코드면 사용 횟수를 올리지 않기 위해 해시를 만든다
     code_hash = make_code_hash(source_code)
 
-    # 🔹 테스트 계정 여부 플래그
+    # 테스트 계정 여부 플래그
     is_test_account = (user_email == "exitgiveme@gmail.com")
+
+    # Pro 구독 여부 (기본값: False)
+    is_pro_user = False
+    subscription_row = None
+
+    # 테스트 계정은 일일 회수 제한도 건너뛴다
+    if is_test_account:
+        print("[API] test account, no daily limit / no node limit")
+    else:
+        # Supabase 구독 정보 조회 (user_id 기준)
+        subscription_row = get_user_subscription(user_id)
+
+        if subscription_row:
+            # status == 'active' 이면 Pro 로 취급
+            if subscription_row.get("status") == "active":
+                is_pro_user = True
+                print("[API] PRO user detected:", user_id, subscription_row)
+        else:
+            print("[API] no subscription row for user:", user_id)
+
+        # Pro 가 아니면 무료 한도 체크
+        if not is_pro_user:
+            # 코드 해시를 기준으로, "새로운 코드"일 때만 사용량 증가
+            usage_count = check_daily_limit(user_id, code_hash)
+    
 
     # 테스트 계정은 일일 회수 제한도 건너뛴다
     if is_test_account:
@@ -546,12 +571,10 @@ async def convert_c_text_to_mermaid(
             mermaid = re.sub(pattern_end,   f"end {display_name}",   mermaid)
         # -----------------------------------------------
 
-
-
         node_count = len(node_lines)
 
-        # 일반 유저만 노드 제한 적용, 테스트 계정은 무제한
-        if (not is_test_account) and node_count > FREE_NODE_LIMIT:
+        # 무료 유저만 노드 제한 적용 (테스트 계정 / Pro 유저는 무제한)
+        if (not is_test_account) and (not is_pro_user) and node_count > FREE_NODE_LIMIT:
             return JSONResponse(
                 status_code=400,
                 content={
@@ -575,6 +598,8 @@ async def convert_c_text_to_mermaid(
                 "usage_count": usage_count,
                 "daily_free_limit": DAILY_FREE_LIMIT,
                 "free_node_limit": FREE_NODE_LIMIT,
+                "is_pro": is_pro_user,
+                "subscription": subscription_row,  # 프론트에서 필요하면 참고용
             }
         )
 
