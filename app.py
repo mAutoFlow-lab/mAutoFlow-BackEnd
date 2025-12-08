@@ -14,6 +14,7 @@ import datetime as dt
 import re
 import requests
 from supabase import create_client, Client
+from jose import jwt, JWTError
 
 from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_function_names
 
@@ -22,6 +23,7 @@ app = FastAPI()
 # --- Supabase client 설정 ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 
 supabase: Client | None = None
 
@@ -162,13 +164,37 @@ def get_user_subscription(user_id: str | None):
 
 def verify_access_token(access_token: str | None):
     """
-    일단은 '로그인해서 토큰을 보내고 있는지' 정도만 확인.
-    토큰 서명 검증은 나중에 Supabase 설정이 안정되면 다시 추가.
+    Supabase JWT(access_token)를 검증해서 user_id, email을 꺼낸다.
+    - 서명이 틀리거나 만료되면 401 에러
     """
     if not access_token:
         raise HTTPException(status_code=401, detail="Missing access_token")
-    # 나중에 여기에 jwt.decode(...)를 다시 넣으면 됨
-    return {"token": access_token}
+
+    if not SUPABASE_JWT_SECRET:
+        # 설정 안 되어 있으면 그냥 존재만 체크하고 통과 (임시 fallback)
+        print("[AUTH] WARNING: SUPABASE_JWT_SECRET not set, skipping JWT verify")
+        return {"user_id": None, "email": None}
+
+    try:
+        # Supabase 기본 설정은 HS256 + audience "authenticated"
+        payload = jwt.decode(
+            access_token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            audience="authenticated",
+        )
+
+        user_id = payload.get("sub")
+        email = payload.get("email")
+
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token: no sub")
+
+        return {"user_id": user_id, "email": email}
+
+    except JWTError as e:
+        print("[AUTH] JWT decode error:", e)
+        raise HTTPException(status_code=401, detail="Invalid access_token")
 
 
 # CORS: 프론트 도메인(.netlify.app)을 넣어준다.
@@ -398,6 +424,19 @@ async def debug_supabase():
         "is_none": (value is None),
     }
 
+@app.post("/debug/auth")
+async def debug_auth(access_token: str = Form(...)):
+    """
+    access_token을 보내서, 백엔드에서 어떻게 decode 되는지 확인용.
+    (나중에 삭제해도 됨)
+    """
+    info = verify_access_token(access_token)
+    return {
+        "ok": True,
+        "decoded": info,
+    }
+
+
 def get_supabase_client() -> Client:
     """
     supabase 전역 클라이언트를 안정적으로 가져오는 함수.
@@ -448,7 +487,14 @@ async def convert_c_text_to_mermaid(
     user_id: str | None = Form(None),
     user_email: str | None = Form(None),
 ):
-    verify_access_token(access_token)
+    # 1) 토큰 검증 + 토큰에서 user 정보 꺼내기
+    token_info = verify_access_token(access_token)
+    token_user_id = token_info.get("user_id")
+    token_email   = token_info.get("email")
+
+    # 2) 폼으로 넘어온 값이 있으면 우선, 없으면 토큰 값 사용
+    user_id = user_id or token_user_id
+    user_email = user_email or token_email
 
     print(f"[REQ] /api/convert_text user_id={user_id} email={user_email}")
 
