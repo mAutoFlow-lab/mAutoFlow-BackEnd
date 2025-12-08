@@ -69,12 +69,21 @@ async def lemon_webhook(request: Request):
     # ---------------------------------------------------
     if event == "subscription_created":
         sub = payload["data"]
-        supabase.table("subscriptions").insert({
+
+        row = {
             "lemon_subscription_id": sub["id"],
             "lemon_customer_id": sub["attributes"]["customer_id"],
+            "product_id": sub["attributes"]["product_id"],
             "variant_id": sub["attributes"]["variant_id"],
-            "status": "active"
-        }).execute()
+            "plan_name": sub["attributes"]["product_name"],  # 예: "pro"
+            "status": sub["attributes"]["status"],           # 예: "active"
+            "is_trial": sub["attributes"]["is_usage_based"] is False,  # 필요에 맞게 조정
+        }
+
+        supabase.table("subscriptions").upsert(
+            row,
+            on_conflict="lemon_subscription_id",
+        ).execute()
 
     # ---------------------------------------------------
     #  Subscription Updated
