@@ -3,4 +3,4 @@ uvicorn[standard]
 python-multipart
 python-jose[cryptography]==3.3.0
 requests==2.31.0
-supabase-py==2.24.0
+supabase
