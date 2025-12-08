@@ -44,64 +44,89 @@ async def lemon_webhook(request: Request):
     if not secret:
         raise HTTPException(status_code=500, detail="Missing webhook secret")
 
-    # Verify signature
+    # 1) 시그니처 검증
     expected_sig = hmac.new(
         secret.encode(),
         body,
-        hashlib.sha256
+        hashlib.sha256,
     ).hexdigest()
 
     if not hmac.compare_digest(signature or "", expected_sig):
         raise HTTPException(status_code=401, detail="Invalid signature")
 
+    # 2) payload / event 추출
     payload = await request.json()
     event = payload.get("meta", {}).get("event_name")
 
-    # 여기서 supabase 클라이언트 확보
-    try:
-        db = get_supabase_client()
-    except RuntimeError as e:
-        # 환경변수 문제면 500으로 올려보내기
-        raise HTTPException(status_code=500, detail=str(e))
+    # 3) supabase 클라이언트 확보
+    db = get_supabase_client()
+
+    # 4) 공통으로 쓸 subscription 데이터 파싱
+    sub = payload.get("data", {}) or {}
+    attrs = sub.get("attributes", {}) or {}
+
+    lemon_subscription_id = sub.get("id")
+    if not lemon_subscription_id:
+        # 이상한 payload면 그냥 400
+        raise HTTPException(status_code=400, detail="Missing subscription id")
+
+    base_row = {
+        "lemon_subscription_id": lemon_subscription_id,
+        "lemon_customer_id": attrs.get("customer_id"),
+        "lemon_order_id": attrs.get("order_id"),
+        "product_id": attrs.get("product_id"),
+        "variant_id": attrs.get("variant_id"),
+        # 이름 쪽은 상황에 따라 product_name / variant_name 등 원하는 값으로 바꿔도 됨
+        "plan_name": attrs.get("product_name") or attrs.get("variant_name"),
+        "status": attrs.get("status"),
+        # Lemon 쪽 status 가 "on_trial" 이면 trial 로 판단
+        "is_trial": attrs.get("status") == "on_trial",
+        "trial_ends_at": attrs.get("trial_ends_at"),
+        "renews_at": attrs.get("renews_at"),
+        "ends_at": attrs.get("ends_at"),
+    }
 
     # ---------------------------------------------------
     #  Subscription Created
     # ---------------------------------------------------
     if event == "subscription_created":
-        sub = payload["data"]
-
-        row = {
-            "lemon_subscription_id": sub["id"],
-            "lemon_customer_id": sub["attributes"]["customer_id"],
-            "product_id": sub["attributes"]["product_id"],
-            "variant_id": sub["attributes"]["variant_id"],
-            "plan_name": sub["attributes"]["product_name"],  # 예: "pro"
-            "status": sub["attributes"]["status"],           # 예: "active"
-            "is_trial": sub["attributes"]["is_usage_based"] is False,  # 필요에 맞게 조정
-        }
-
-        supabase.table("subscriptions").upsert(
-            row,
-            on_conflict="lemon_subscription_id",
-        ).execute()
+        try:
+            db.table("subscriptions").insert(base_row).execute()
+        except Exception as e:
+            # 같은 subscription_created 를 Resend 하면
+            # unique 제약조건 때문에 duplicate key 에러가 날 수 있음.
+            msg = str(e)
+            if "duplicate key value violates unique constraint" in msg:
+                # 이미 있으면 그냥 무시하고 200 OK만 리턴 (idempotent 동작)
+                print("[WEBHOOK] duplicate subscription_created, ignore:", msg)
+            else:
+                # 다른 에러는 그대로 올림
+                raise
 
     # ---------------------------------------------------
     #  Subscription Updated
     # ---------------------------------------------------
     elif event == "subscription_updated":
-        sub = payload["data"]
-        supabase.table("subscriptions").update({
-            "status": sub["attributes"]["status"]
-        }).eq("lemon_subscription_id", sub["id"]).execute()
+        db.table("subscriptions").update(base_row) \
+          .eq("lemon_subscription_id", lemon_subscription_id) \
+          .execute()
 
     # ---------------------------------------------------
     # Subscription Cancelled
     # ---------------------------------------------------
     elif event == "subscription_cancelled":
-        sub = payload["data"]
-        supabase.table("subscriptions").update({
-            "status": "cancelled"
-        }).eq("lemon_subscription_id", sub["id"]).execute()
+        # cancelled 시에는 status 를 강제로 "cancelled" 로 맞춰 주는 것도 좋음
+        cancel_row = {
+            **base_row,
+            "status": "cancelled",
+        }
+        db.table("subscriptions").update(cancel_row) \
+          .eq("lemon_subscription_id", lemon_subscription_id) \
+          .execute()
+
+    # 그 외 이벤트(order_created 등)는 일단 무시
+    else:
+        print(f"[WEBHOOK] ignore event: {event}")
 
     return {"ok": True}
 
