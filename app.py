@@ -9,6 +9,7 @@ from collections import defaultdict
 
 import os
 import hashlib
+import hmac        # webhook 검증용
 import datetime as dt
 import re
 import requests
@@ -17,6 +18,61 @@ import requests
 from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_function_names
 
 app = FastAPI()
+
+@app.post("/webhook/lemon")
+async def lemon_webhook(request: Request):
+    body = await request.body()
+    signature = request.headers.get("X-Signature")
+
+    secret = os.getenv("LEMON_WEBHOOK_SECRET")
+    if not secret:
+        raise HTTPException(status_code=500, detail="Missing webhook secret")
+
+    # Verify signature
+    expected_sig = hmac.new(
+        secret.encode(),
+        body,
+        hashlib.sha256
+    ).hexdigest()
+
+    if not hmac.compare_digest(signature, expected_sig):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    payload = await request.json()
+    event = payload.get("meta", {}).get("event_name")
+
+    # ---------------------------------------------------
+    #  Subscription Created
+    # ---------------------------------------------------
+    if event == "subscription_created":
+        sub = payload["data"]
+        supabase.table("subscriptions").insert({
+            "lemon_subscription_id": sub["id"],
+            "lemon_customer_id": sub["attributes"]["customer_id"],
+            "variant_id": sub["attributes"]["variant_id"],
+            "status": "active"
+        }).execute()
+
+    # ---------------------------------------------------
+    #  Subscription Updated
+    # ---------------------------------------------------
+    elif event == "subscription_updated":
+        sub = payload["data"]
+        supabase.table("subscriptions").update({
+            "status": sub["attributes"]["status"]
+        }).eq("lemon_subscription_id", sub["id"]).execute()
+
+    # ---------------------------------------------------
+    # Subscription Cancelled
+    # ---------------------------------------------------
+    elif event == "subscription_cancelled":
+        sub = payload["data"]
+        supabase.table("subscriptions").update({
+            "status": "cancelled"
+        }).eq("lemon_subscription_id", sub["id"]).execute()
+
+    return {"ok": True}
+
 
 # ================= Supabase 구독 정보 조회 설정 =================
 
