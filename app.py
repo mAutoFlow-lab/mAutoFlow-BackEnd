@@ -57,6 +57,13 @@ async def lemon_webhook(request: Request):
     payload = await request.json()
     event = payload.get("meta", {}).get("event_name")
 
+    # 여기서 supabase 클라이언트 확보
+    try:
+        db = get_supabase_client()
+    except RuntimeError as e:
+        # 환경변수 문제면 500으로 올려보내기
+        raise HTTPException(status_code=500, detail=str(e))
+
     # ---------------------------------------------------
     #  Subscription Created
     # ---------------------------------------------------
@@ -344,6 +351,39 @@ def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
 
     # full_signature 를 함께 리턴
     return mermaid, func_name, node_lines, full_signature
+
+
+@app.get("/debug/supabase")
+async def debug_supabase():
+    # supabase가 globals에 있는지, 타입이 뭔지 확인
+    exists = "supabase" in globals()
+    value = globals().get("supabase", None)
+    return {
+        "exists_in_globals": exists,
+        "value_type": str(type(value)),
+        "is_none": (value is None),
+    }
+
+def get_supabase_client() -> Client:
+    """
+    supabase 전역 클라이언트를 안정적으로 가져오는 함수.
+    supabase가 None이면 환경변수를 다시 읽어 재생성한다.
+    """
+    global supabase
+
+    # 이미 전역 supabase가 초기화되어 있다면 그대로 반환
+    if supabase is not None:
+        return supabase
+
+    # None이면 환경변수로 재생성 시도
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+
+    if not url or not key:
+        raise RuntimeError("SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되지 않았습니다.")
+
+    supabase = create_client(url, key)
+    return supabase
 
 
 @app.get("/version")
