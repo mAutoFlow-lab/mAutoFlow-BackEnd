@@ -586,8 +586,11 @@ async def convert_c_text_to_mermaid(
                 "usage_count": usage_count,
                 "daily_free_limit": DAILY_FREE_LIMIT,
                 "free_node_limit": FREE_NODE_LIMIT,
-                "is_pro": is_pro_user,
-                "subscription": subscription_row,
+                
+                # === 신규/수정된 응답 필드 ===
+                "is_pro_user": is_pro_user,
+                "plan_name": subscription_row.get("plan_name") if subscription_row else None,
+                "is_test_account": is_test_account,
             }
         )
 
