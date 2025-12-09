@@ -151,7 +151,7 @@ def get_user_subscription(user_id: str | None):
         resp = (
             supabase
             .table("subscriptions")
-            .select("plan_name,status,is_trial,trial_ends_at,renews_at,ends_at")
+            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at")
             .eq("user_id", user_id)
             .limit(1)
             .execute()
@@ -254,7 +254,9 @@ app.add_middleware(
 
 DEPLOY_VERSION = "v0.0.3"
 DAILY_FREE_LIMIT = 5
-FREE_NODE_LIMIT = 20
+FREE_NODE_LIMIT    = 20       # Free: 20 nodes
+PRO_NODE_LIMIT     = 200      # Pro : 200 nodes
+EXPERT_NODE_LIMIT  = 1000     # Expert: 1000 nodes
 
 # user_id 별로 오늘 날짜, 사용 횟수, 마지막 코드 해시를 기억
 _usage_counter = defaultdict(
@@ -552,7 +554,17 @@ async def convert_c_text_to_mermaid(
     is_pro_user = False
     subscription_row = None
 
-    # ====== ✅ 일일 제한 / Pro 판단 로직 정리 ======
+    # ====== ✅ 일일 제한 / Pro. Expert 판단 로직 정리 ======
+    # 테스트 계정 여부 플래그
+    is_test_account = (user_email == "exitgiveme@gmail.com")
+
+    # 기본값: 무료 플랜
+    is_pro_user      = False   # Pro / Expert 여부 (무료와 구분용)
+    subscription_row = None
+    plan_tier        = "free"  # "free" | "pro" | "expert"
+    node_limit       = FREE_NODE_LIMIT
+
+    # ====== ✅ 일일 제한 / 플랜 판단 로직 정리 ======
     # 테스트 계정은 완전 무제한 (일일 제한/노드 제한 둘 다 X)
     if is_test_account:
         print("[API] test account, no daily limit / no node limit")
@@ -561,14 +573,26 @@ async def convert_c_text_to_mermaid(
         subscription_row = get_user_subscription(user_id)
 
         if subscription_row and subscription_row.get("status") == "active":
-            # status == 'active' 이면 Pro
-            is_pro_user = True
-            print("[API] PRO user detected:", user_id, subscription_row)
+            # status == 'active' 이면 유료 플랜 (pro 또는 expert)
+            plan_tier = subscription_row.get("plan_tier") or "pro"
+            is_pro_user = plan_tier in ("pro", "expert")
+
+            # 플랜별 노드 제한
+            if plan_tier == "expert":
+                node_limit = EXPERT_NODE_LIMIT
+            elif plan_tier == "pro":
+                node_limit = PRO_NODE_LIMIT
+            else:
+                node_limit = FREE_NODE_LIMIT
+
+            print(f"[API] subscription active: user={user_id}, tier={plan_tier}, row={subscription_row}")
         else:
             print("[API] no active subscription row for user:", user_id, subscription_row)
+            plan_tier  = "free"
+            node_limit = FREE_NODE_LIMIT
 
-        # Pro 가 아닌 일반 무료 사용자만 일일 제한 적용
-        if not is_pro_user:
+        # 무료 플랜(free) 에만 일일 제한 적용
+        if plan_tier == "free":
             usage_count = check_daily_limit(user_id, code_hash)
     # ====== 여기까지가 핵심 변경 부분 ======
 
@@ -629,6 +653,8 @@ async def convert_c_text_to_mermaid(
                 # === 신규/수정된 응답 필드 ===
                 "is_pro_user": is_pro_user,
                 "plan_name": subscription_row.get("plan_name") if subscription_row else None,
+                "plan_tier": plan_tier,         # ★ 추가: "free" | "pro" | "expert"
+                "node_limit": node_limit,       # ★ 추가: 20 / 200 / 1000
                 "is_test_account": is_test_account,
             }
         )
