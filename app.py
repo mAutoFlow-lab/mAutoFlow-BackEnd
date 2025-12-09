@@ -140,6 +140,10 @@ async def lemon_webhook(request: Request):
 
 
 def get_user_subscription(user_id: str | None):
+    """
+    user_id 기준으로 가장 최근의 active 구독 1개를 가져온다.
+    없으면 None.
+    """
     if not user_id:
         return None
 
@@ -151,8 +155,10 @@ def get_user_subscription(user_id: str | None):
         resp = (
             supabase
             .table("subscriptions")
-            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at")
+            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,created_at")
             .eq("user_id", user_id)
+            .eq("status", "active")
+            .order("created_at", desc=True)
             .limit(1)
             .execute()
         )
@@ -162,6 +168,7 @@ def get_user_subscription(user_id: str | None):
 
     rows = getattr(resp, "data", None) or []
     if not rows:
+        print("[SUBS] no active subscription for user:", user_id)
         return None
 
     print("[SUBS] subscription row:", rows[0])
@@ -542,60 +549,66 @@ async def convert_c_text_to_mermaid(
     if not user_id:
         raise HTTPException(status_code=400, detail="MISSING_USER_ID")
 
-    usage_count: int | None = None
-
     # 같은 코드면 사용 횟수를 올리지 않기 위해 해시를 만든다
     code_hash = make_code_hash(source_code)
 
-    # 테스트 계정 여부 플래그
-    is_test_account = (user_email == "exitgiveme@gmail.com")
-
-    # Pro 구독 여부 (기본값: False)
-    is_pro_user = False
-    subscription_row = None
-
-    # ====== ✅ 일일 제한 / Pro. Expert 판단 로직 정리 ======
-    # 테스트 계정 여부 플래그
-    is_test_account = (user_email == "exitgiveme@gmail.com")
+    # ---------------------------
+    # 플랜/쿼터 판별
+    # ---------------------------
+    TEST_EMAIL = "exitgiveme@gmail.com"
+    is_test_account = (user_email == TEST_EMAIL)
 
     # 기본값: 무료 플랜
-    is_pro_user      = False   # Pro / Expert 여부 (무료와 구분용)
+    plan_tier   = "free"        # "free" | "pro" | "expert" | "unlimited"
+    plan_name   = "Free tier"
+    node_limit  = FREE_NODE_LIMIT
+    is_pro_user = False
+    usage_count: int | None = None
     subscription_row = None
-    plan_tier        = "free"  # "free" | "pro" | "expert"
-    node_limit       = FREE_NODE_LIMIT
 
-    # ====== ✅ 일일 제한 / 플랜 판단 로직 정리 ======
-    # 테스트 계정은 완전 무제한 (일일 제한/노드 제한 둘 다 X)
     if is_test_account:
-        print("[API] test account, no daily limit / no node limit")
+        # 테스트 계정: 완전 무제한
+        plan_tier  = "unlimited"
+        plan_name  = "Test account (unlimited)"
+        node_limit = None   # 노드 제한 없음
+        print("[API] test account, no daily/node limit")
     else:
-        # Supabase 구독 정보 조회 (user_id 기준)
+        # Supabase 구독 정보 조회
         subscription_row = get_user_subscription(user_id)
 
-        if subscription_row and subscription_row.get("status") == "active":
-            # status == 'active' 이면 유료 플랜 (pro 또는 expert)
-            plan_tier = subscription_row.get("plan_tier") or "pro"
-            is_pro_user = plan_tier in ("pro", "expert")
+        if subscription_row:
+            db_plan_tier = (subscription_row.get("plan_tier") or "").lower()
+            if db_plan_tier in ("pro", "expert", "unlimited", "free"):
+                plan_tier = db_plan_tier
+            else:
+                plan_tier = "pro"  # 이상한 값이면 pro 로 fallback
 
-            # 플랜별 노드 제한
+            plan_name = subscription_row.get("plan_name") or plan_tier.title()
+
             if plan_tier == "expert":
                 node_limit = EXPERT_NODE_LIMIT
             elif plan_tier == "pro":
                 node_limit = PRO_NODE_LIMIT
+            elif plan_tier == "unlimited":
+                node_limit = None
             else:
                 node_limit = FREE_NODE_LIMIT
 
+            is_pro_user = plan_tier in ("pro", "expert")
             print(f"[API] subscription active: user={user_id}, tier={plan_tier}, row={subscription_row}")
         else:
-            print("[API] no active subscription row for user:", user_id, subscription_row)
+            print("[API] no active subscription row for user:", user_id)
             plan_tier  = "free"
+            plan_name  = "Free tier"
             node_limit = FREE_NODE_LIMIT
 
-        # 무료 플랜(free) 에만 일일 제한 적용
+        # 무료 플랜(free)에만 일일 제한 적용
         if plan_tier == "free":
             usage_count = check_daily_limit(user_id, code_hash)
-    # ====== 여기까지가 핵심 변경 부분 ======
 
+    # ---------------------------
+    # 플로우차트 생성
+    # ---------------------------
     try:
         mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
             source_code,
@@ -625,36 +638,50 @@ async def convert_c_text_to_mermaid(
 
         node_count = len(node_lines)
 
-        # ✅ 노드 제한: “테스트 계정 X & Pro X” 인 **일반 무료**만 제한
-        if (not is_test_account) and (not is_pro_user) and node_count > FREE_NODE_LIMIT:
+        # ---------------------------
+        # 노드 제한 체크
+        # ---------------------------
+        # - 테스트 계정: node_limit=None 이라 항상 통과
+        # - 나머지: plan_tier별 node_limit 기준으로 체크
+        if node_limit is not None and node_count > node_limit:
             return JSONResponse(
                 status_code=400,
                 content={
                     "mermaid": "",
-                    "func_name": "",
+                    "func_name": func_name,
                     "error": "TOO_MANY_NODES",
                     "error_code": "TOO_MANY_NODES",
+                    "node_count": node_count,
+                    "node_limit": node_limit,
+                    "plan_tier": plan_tier,
+                    "plan_name": plan_name,
                     "usage_count": usage_count,
                     "daily_free_limit": DAILY_FREE_LIMIT,
                     "free_node_limit": FREE_NODE_LIMIT,
+                    "is_test_account": is_test_account,
+                    "is_pro_user": is_pro_user,
                 },
             )
 
+        # ---------------------------
+        # 정상 응답
+        # ---------------------------
         return JSONResponse(
             {
                 "mermaid": mermaid,
                 "func_name": func_name,
                 "full_signature": full_signature,
                 "node_lines": node_lines,
+                "node_count": node_count,
                 "usage_count": usage_count,
                 "daily_free_limit": DAILY_FREE_LIMIT,
                 "free_node_limit": FREE_NODE_LIMIT,
-                
-                # === 신규/수정된 응답 필드 ===
                 "is_pro_user": is_pro_user,
-                "plan_name": subscription_row.get("plan_name") if subscription_row else None,
-                "plan_tier": plan_tier,         # ★ 추가: "free" | "pro" | "expert"
-                "node_limit": node_limit,       # ★ 추가: 20 / 200 / 1000
+
+                # 플랜 정보
+                "plan_name": plan_name,
+                "plan_tier": plan_tier,     # "free" | "pro" | "expert" | "unlimited"
+                "node_limit": node_limit,   # 20 / 200 / 1000 / None
                 "is_test_account": is_test_account,
             }
         )
