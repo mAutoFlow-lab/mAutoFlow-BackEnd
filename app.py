@@ -36,7 +36,6 @@ else:
 # --- 여기까지 ---
 
 
-
 @app.post("/webhook/lemon")
 async def lemon_webhook(request: Request):
     body = await request.body()
@@ -69,19 +68,25 @@ async def lemon_webhook(request: Request):
 
     lemon_subscription_id = sub.get("id")
     if not lemon_subscription_id:
-        # 이상한 payload면 그냥 400
         raise HTTPException(status_code=400, detail="Missing subscription id")
 
+    # ✅ Lemon 쪽에서 넘어온 구독자 이메일
+    user_email = attrs.get("user_email")
+
+    # ✅ 이메일로 Supabase user_id 찾기 (profiles 테이블 기준)
+    user_id = lookup_user_id_by_email(db, user_email)
+
     base_row = {
+        # 🔑 Supabase 유저와의 연결
+        "user_id": user_id,
+
         "lemon_subscription_id": lemon_subscription_id,
         "lemon_customer_id": attrs.get("customer_id"),
         "lemon_order_id": attrs.get("order_id"),
         "product_id": attrs.get("product_id"),
         "variant_id": attrs.get("variant_id"),
-        # 이름 쪽은 상황에 따라 product_name / variant_name 등 원하는 값으로 바꿔도 됨
         "plan_name": attrs.get("product_name") or attrs.get("variant_name"),
         "status": attrs.get("status"),
-        # Lemon 쪽 status 가 "on_trial" 이면 trial 로 판단
         "is_trial": attrs.get("status") == "on_trial",
         "trial_ends_at": attrs.get("trial_ends_at"),
         "renews_at": attrs.get("renews_at"),
@@ -95,21 +100,22 @@ async def lemon_webhook(request: Request):
         try:
             db.table("subscriptions").insert(base_row).execute()
         except Exception as e:
-            # 같은 subscription_created 를 Resend 하면
-            # unique 제약조건 때문에 duplicate key 에러가 날 수 있음.
             msg = str(e)
             if "duplicate key value violates unique constraint" in msg:
-                # 이미 있으면 그냥 무시하고 200 OK만 리턴 (idempotent 동작)
                 print("[WEBHOOK] duplicate subscription_created, ignore:", msg)
             else:
-                # 다른 에러는 그대로 올림
                 raise
 
     # ---------------------------------------------------
     #  Subscription Updated
     # ---------------------------------------------------
     elif event == "subscription_updated":
-        db.table("subscriptions").update(base_row) \
+        # ⚠ 이미 DB에 user_id가 있을 수도 있으니, None 으로 덮어쓰지 않게 처리
+        update_row = dict(base_row)
+        if user_id is None:
+            update_row.pop("user_id", None)
+
+        db.table("subscriptions").update(update_row) \
           .eq("lemon_subscription_id", lemon_subscription_id) \
           .execute()
 
@@ -117,20 +123,20 @@ async def lemon_webhook(request: Request):
     # Subscription Cancelled
     # ---------------------------------------------------
     elif event == "subscription_cancelled":
-        # cancelled 시에는 status 를 강제로 "cancelled" 로 맞춰 주는 것도 좋음
-        cancel_row = {
-            **base_row,
-            "status": "cancelled",
-        }
+        cancel_row = dict(base_row)
+        cancel_row["status"] = "cancelled"
+        if user_id is None:
+            cancel_row.pop("user_id", None)
+
         db.table("subscriptions").update(cancel_row) \
           .eq("lemon_subscription_id", lemon_subscription_id) \
           .execute()
 
-    # 그 외 이벤트(order_created 등)는 일단 무시
     else:
         print(f"[WEBHOOK] ignore event: {event}")
 
     return {"ok": True}
+
 
 
 def get_user_subscription(user_id: str | None):
@@ -160,6 +166,39 @@ def get_user_subscription(user_id: str | None):
 
     print("[SUBS] subscription row:", rows[0])
     return rows[0]
+
+
+def lookup_user_id_by_email(db: Client, email: str | None) -> str | None:
+    """
+    Lemon 구독 webhook payload 안의 user_email 로
+    Supabase 쪽 user_id 를 찾는다.
+    - 여기서는 public.profiles 테이블에 (id, email) 이 있다고 가정.
+      만약 테이블 이름이 다르면 아래 table("profiles") 부분만 수정.
+    """
+    if not email:
+        return None
+
+    try:
+        resp = (
+            db.table("profiles")  # <-- 너희 실제 유저 테이블 이름으로 변경 가능
+              .select("id")
+              .eq("email", email)
+              .limit(1)
+              .execute()
+        )
+    except Exception as e:
+        print("[WEBHOOK] lookup_user_id_by_email error:", e)
+        return None
+
+    rows = getattr(resp, "data", None) or []
+    if not rows:
+        print("[WEBHOOK] no matching user for email:", email)
+        return None
+
+    user_id = rows[0].get("id")
+    print(f"[WEBHOOK] matched email {email} -> user_id {user_id}")
+    return user_id
+
 
 
 def verify_access_token(access_token: str | None):
