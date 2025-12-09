@@ -513,33 +513,25 @@ async def convert_c_text_to_mermaid(
     is_pro_user = False
     subscription_row = None
 
-    # 테스트 계정은 일일 회수 제한도 건너뛴다
+    # ====== ✅ 일일 제한 / Pro 판단 로직 정리 ======
+    # 테스트 계정은 완전 무제한 (일일 제한/노드 제한 둘 다 X)
     if is_test_account:
         print("[API] test account, no daily limit / no node limit")
     else:
         # Supabase 구독 정보 조회 (user_id 기준)
         subscription_row = get_user_subscription(user_id)
 
-        if subscription_row:
-            # status == 'active' 이면 Pro 로 취급
-            if subscription_row.get("status") == "active":
-                is_pro_user = True
-                print("[API] PRO user detected:", user_id, subscription_row)
+        if subscription_row and subscription_row.get("status") == "active":
+            # status == 'active' 이면 Pro
+            is_pro_user = True
+            print("[API] PRO user detected:", user_id, subscription_row)
         else:
-            print("[API] no subscription row for user:", user_id)
+            print("[API] no active subscription row for user:", user_id, subscription_row)
 
-        # Pro 가 아니면 무료 한도 체크
+        # Pro 가 아닌 일반 무료 사용자만 일일 제한 적용
         if not is_pro_user:
-            # 코드 해시를 기준으로, "새로운 코드"일 때만 사용량 증가
             usage_count = check_daily_limit(user_id, code_hash)
-    
-
-    # 테스트 계정은 일일 회수 제한도 건너뛴다
-    if is_test_account:
-        print("[API] test account, no daily limit / no node limit")
-    else:
-        # 코드 해시를 기준으로, "새로운 코드"일 때만 사용량 증가
-        usage_count = check_daily_limit(user_id, code_hash)
+    # ====== 여기까지가 핵심 변경 부분 ======
 
     try:
         mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
@@ -552,7 +544,6 @@ async def convert_c_text_to_mermaid(
         if style not in ("short", "full"):
             style = "short"
 
-        # 화면에 보여줄 이름 (헤더 + 다이어그램 start/end 노드용)
         display_short = (func_name or "").strip()
         display_full  = (full_signature or "").strip()
 
@@ -561,8 +552,6 @@ async def convert_c_text_to_mermaid(
         else:
             display_name = display_short
 
-        # Mermaid 코드의 start/end 라벨 치환
-        #   - 노드 라벨 안에 들어있는 "start 함수이름()" / "end 함수이름()" 텍스트만 교체
         if display_name and func_name:
             pattern_start = r"start\s+" + re.escape(func_name) + r"\s*\(\)?"
             pattern_end   = r"end\s+"   + re.escape(func_name) + r"\s*\(\)?"
@@ -573,7 +562,7 @@ async def convert_c_text_to_mermaid(
 
         node_count = len(node_lines)
 
-        # 무료 유저만 노드 제한 적용 (테스트 계정 / Pro 유저는 무제한)
+        # ✅ 노드 제한: “테스트 계정 X & Pro X” 인 **일반 무료**만 제한
         if (not is_test_account) and (not is_pro_user) and node_count > FREE_NODE_LIMIT:
             return JSONResponse(
                 status_code=400,
@@ -582,7 +571,6 @@ async def convert_c_text_to_mermaid(
                     "func_name": "",
                     "error": "TOO_MANY_NODES",
                     "error_code": "TOO_MANY_NODES",
-                    # 사용량 정보도 같이 내려주고 싶으면 여기서 usage_count 포함 가능
                     "usage_count": usage_count,
                     "daily_free_limit": DAILY_FREE_LIMIT,
                     "free_node_limit": FREE_NODE_LIMIT,
@@ -593,13 +581,13 @@ async def convert_c_text_to_mermaid(
             {
                 "mermaid": mermaid,
                 "func_name": func_name,
-                "full_signature": full_signature,   # 추가
+                "full_signature": full_signature,
                 "node_lines": node_lines,
                 "usage_count": usage_count,
                 "daily_free_limit": DAILY_FREE_LIMIT,
                 "free_node_limit": FREE_NODE_LIMIT,
                 "is_pro": is_pro_user,
-                "subscription": subscription_row,  # 프론트에서 필요하면 참고용
+                "subscription": subscription_row,
             }
         )
 
