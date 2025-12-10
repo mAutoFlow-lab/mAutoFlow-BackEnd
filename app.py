@@ -38,7 +38,7 @@ else:
 # Lemon Squeezy variant_id -> 내부 플랜 티어 매핑
 LEMON_VARIANT_TO_TIER = {
     # TODO: 여기 숫자들은 실제 Lemon 대시보드의 variant_id로 교체해야 함
-    3637: "expert",
+    1135830: "expert",
     1134483: "pro",
 }
 
