@@ -35,108 +35,112 @@ else:
     print("[WARN] SUPABASE_URL 또는 SUPABASE_SERVICE_ROLE_KEY가 설정되지 않았습니다.")
 # --- 여기까지 ---
 
+# Lemon Squeezy variant_id -> 내부 플랜 티어 매핑
+LEMON_VARIANT_TO_TIER = {
+    # TODO: 여기 숫자들은 실제 Lemon 대시보드의 variant_id로 교체해야 함
+    # 예시:
+    # 123456: "pro",
+    # 123457: "expert",
+}
+
+
 
 @app.post("/webhook/lemon")
 async def lemon_webhook(request: Request):
-    body = await request.body()
-    signature = request.headers.get("X-Signature")
+    """
+    Lemon Squeezy → Supabase 구독 동기화
+    (현재 구조 + plan_tier/plan_name/variant 연동)
+    """
+    try:
+        body = await request.json()
+    except Exception as e:
+        print("[LEMON] invalid JSON", e)
+        raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    secret = os.getenv("LEMON_WEBHOOK_SECRET")
-    if not secret:
-        raise HTTPException(status_code=500, detail="Missing webhook secret")
+    event_name = body.get("meta", {}).get("event_name")
+    data = body.get("data", {})
+    attr = data.get("attributes", {})
 
-    # 1) 시그니처 검증
-    expected_sig = hmac.new(
-        secret.encode(),
-        body,
-        hashlib.sha256,
-    ).hexdigest()
+    print(f"[LEMON] event received: {event_name}")
 
-    if not hmac.compare_digest(signature or "", expected_sig):
-        raise HTTPException(status_code=401, detail="Invalid signature")
-
-    # 2) payload / event 추출
-    payload = await request.json()
-    event = payload.get("meta", {}).get("event_name")
-
-    # 3) supabase 클라이언트 확보
+    # Supabase 클라이언트 준비
     db = get_supabase_client()
 
-    # 4) 공통으로 쓸 subscription 데이터 파싱
-    sub = payload.get("data", {}) or {}
-    attrs = sub.get("attributes", {}) or {}
+    # --- 공통 값 ---
+    variant_id = attr.get("variant_id")
+    subscription_id = attr.get("id")
+    status = attr.get("status")  # active|on_trial|cancelled|expired ...
+    renews_at = attr.get("renews_at")
+    ends_at = attr.get("ends_at")
+    trial_ends_at = attr.get("trial_ends_at")
+    is_trial = (status == "on_trial")
 
-    lemon_subscription_id = sub.get("id")
-    if not lemon_subscription_id:
-        raise HTTPException(status_code=400, detail="Missing subscription id")
+    # Lemon metadata에 Supabase user_id 넣어둔 경우 우선 사용
+    user_id = (
+        attr.get("user_id")
+        or (attr.get("custom_data") or {}).get("user_id")
+    )
 
-    # ✅ Lemon 쪽에서 넘어온 구독자 이메일
-    user_email = attrs.get("user_email")
+    # --- 1) user_id가 없는 경우 email로 lookup ---
+    if not user_id:
+        customer_email = attr.get("user_email")
+        if customer_email:
+            user_id = lookup_user_id_by_email(db, customer_email)
 
-    # ✅ 이메일로 Supabase user_id 찾기 (profiles 테이블 기준)
-    user_id = lookup_user_id_by_email(db, user_email)
+    if not user_id:
+        print("[LEMON] Could not resolve user_id. Ignoring event.")
+        return {"ok": True}
 
-    base_row = {
-        # 🔑 Supabase 유저와의 연결
+    # --- 2) variant_id → plan_tier 결정 ---
+    plan_tier = LEMON_VARIANT_TO_TIER.get(variant_id, "free")
+
+    payload = {
         "user_id": user_id,
-
-        "lemon_subscription_id": lemon_subscription_id,
-        "lemon_customer_id": attrs.get("customer_id"),
-        "lemon_order_id": attrs.get("order_id"),
-        "product_id": attrs.get("product_id"),
-        "variant_id": attrs.get("variant_id"),
-        "plan_name": attrs.get("product_name") or attrs.get("variant_name"),
-        "status": attrs.get("status"),
-        "is_trial": attrs.get("status") == "on_trial",
-        "trial_ends_at": attrs.get("trial_ends_at"),
-        "renews_at": attrs.get("renews_at"),
-        "ends_at": attrs.get("ends_at"),
+        "subscription_id": str(subscription_id),
+        "variant_id": variant_id,
+        "plan_tier": plan_tier,
+        "status": "active" if status in ("active", "on_trial") else "cancelled",
+        "is_trial": is_trial,
+        "renews_at": renews_at,
+        "ends_at": ends_at,
+        "trial_ends_at": trial_ends_at,
+        "updated_at": dt.datetime.utcnow().isoformat() + "Z",
     }
 
-    # ---------------------------------------------------
-    #  Subscription Created
-    # ---------------------------------------------------
-    if event == "subscription_created":
-        try:
-            db.table("subscriptions").insert(base_row).execute()
-        except Exception as e:
-            msg = str(e)
-            if "duplicate key value violates unique constraint" in msg:
-                print("[WEBHOOK] duplicate subscription_created, ignore:", msg)
-            else:
-                raise
+    # --- 이벤트 타입별 처리 ---
+    if event_name in ("subscription_created", "subscription_updated", "subscription_resumed"):
+        db.table("subscriptions").upsert(
+            payload,
+            on_conflict="subscription_id"
+        ).execute()
+        print(f"[LEMON] subscription upsert: user={user_id}, tier={plan_tier}")
 
-    # ---------------------------------------------------
-    #  Subscription Updated
-    # ---------------------------------------------------
-    elif event == "subscription_updated":
-        # ⚠ 이미 DB에 user_id가 있을 수도 있으니, None 으로 덮어쓰지 않게 처리
-        update_row = dict(base_row)
-        if user_id is None:
-            update_row.pop("user_id", None)
+    elif event_name in ("subscription_cancelled", "subscription_expired"):
+        payload["status"] = "cancelled"
+        db.table("subscriptions").upsert(
+            payload,
+            on_conflict="subscription_id"
+        ).execute()
+        print(f"[LEMON] subscription cancelled: user={user_id}")
 
-        db.table("subscriptions").update(update_row) \
-          .eq("lemon_subscription_id", lemon_subscription_id) \
-          .execute()
+    elif event_name == "subscription_payment_success":
+        # renewal 성공 → active 유지
+        db.table("subscriptions").update({
+            "status": "active",
+            "renews_at": renews_at,
+            "updated_at": dt.datetime.utcnow().isoformat() + "Z",
+        }).eq("subscription_id", str(subscription_id)).execute()
 
-    # ---------------------------------------------------
-    # Subscription Cancelled
-    # ---------------------------------------------------
-    elif event == "subscription_cancelled":
-        cancel_row = dict(base_row)
-        cancel_row["status"] = "cancelled"
-        if user_id is None:
-            cancel_row.pop("user_id", None)
+        print(f"[LEMON] subscription renewed: user={user_id}")
 
-        db.table("subscriptions").update(cancel_row) \
-          .eq("lemon_subscription_id", lemon_subscription_id) \
-          .execute()
+    elif event_name == "subscription_payment_failed":
+        # 결제 실패지만 유예 기간(grace period)이 있을 수 있음 → cancel 처리 안함
+        print(f"[LEMON] payment failed (grace period): user={user_id}")
 
     else:
-        print(f"[WEBHOOK] ignore event: {event}")
+        print(f"[LEMON] ignored event: {event_name}")
 
     return {"ok": True}
-
 
 
 def get_user_subscription(user_id: str | None):
