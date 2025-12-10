@@ -74,23 +74,30 @@ async def lemon_webhook(request: Request):
     trial_ends_at = attr.get("trial_ends_at")
     is_trial = (status == "on_trial")
 
-    # Lemon metadata에 Supabase user_id 넣어둔 경우 우선 사용
-    user_id = (
-        attr.get("user_id")
-        or (attr.get("custom_data") or {}).get("user_id")
-    )
+    # --- 1) 가장 이상적인 방식: custom_data.user_id 사용 ---
+    custom_data = attr.get("custom_data") or {}
+    user_id = custom_data.get("user_id")
 
-    # --- 1) user_id가 없는 경우 email로 lookup ---
+    # --- 2) Lemon이 payload.user_id 제공하는 경우 ---
+    if not user_id:
+        user_id = attr.get("user_id")
+
+    # --- 3) email 기반 fallback (profiles 테이블이 없는 환경에서도 안전하게 처리) ---
     if not user_id:
         customer_email = attr.get("user_email")
         if customer_email:
-            user_id = lookup_user_id_by_email(db, customer_email)
+            try:
+                user_id = lookup_user_id_by_email(db, customer_email)
+            except Exception as e:
+                print("[LEMON] email lookup failed:", e)
+                user_id = None
 
+    # --- 4) 그래도 user_id를 알 수 없으면 이 이벤트는 처리 불가 ---
     if not user_id:
         print("[LEMON] Could not resolve user_id. Ignoring event.")
         return {"ok": True}
 
-    # --- 2) variant_id → plan_tier 결정 ---
+    # --- variant_id → plan_tier 결정 ---
     plan_tier = LEMON_VARIANT_TO_TIER.get(variant_id, "free")
 
     payload = {
