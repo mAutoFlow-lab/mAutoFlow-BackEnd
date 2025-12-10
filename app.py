@@ -56,9 +56,11 @@ async def lemon_webhook(request: Request):
         print("[LEMON] invalid JSON", e)
         raise HTTPException(status_code=400, detail="Invalid JSON")
 
-    event_name = body.get("meta", {}).get("event_name")
-    data = body.get("data", {})
-    attr = data.get("attributes", {})
+    # meta / data / attributes 안전하게 파싱
+    meta = body.get("meta", {}) or {}
+    event_name = meta.get("event_name")
+    data = body.get("data", {}) or {}
+    attr = data.get("attributes", {}) or {}
 
     print(f"[LEMON] event received: {event_name}")
 
@@ -74,11 +76,15 @@ async def lemon_webhook(request: Request):
     trial_ends_at = attr.get("trial_ends_at")
     is_trial = (status == "on_trial")
 
-    # --- 1) 가장 이상적인 방식: custom_data.user_id 사용 ---
-    custom_data = attr.get("custom_data") or {}
+    # --- 1) 가장 이상적인 방식: meta.custom_data.user_id 사용 ---
+    # Hosted Checkout URL:
+    #   ...?checkout[custom][user_id]=<supabase_user_id>
+    # → webhook JSON:
+    #   meta.custom_data.user_id 로 들어옴
+    custom_data = meta.get("custom_data") or {}
     user_id = custom_data.get("user_id")
 
-    # --- 2) Lemon이 payload.user_id 제공하는 경우 ---
+    # --- 2) Lemon이 attributes.user_id 를 직접 주는 경우 (거의 없지만 대비) ---
     if not user_id:
         user_id = attr.get("user_id")
 
@@ -135,7 +141,7 @@ async def lemon_webhook(request: Request):
             "status": "active",
             "renews_at": renews_at,
             "updated_at": dt.datetime.utcnow().isoformat() + "Z",
-        }).eq("subscription_id", str(subscription_id)).execute()
+        }).eq("lemon_subscription_id", str(subscription_id)).execute()
 
         print(f"[LEMON] subscription renewed: user={user_id}")
 
