@@ -141,7 +141,7 @@ async def lemon_webhook(request: Request):
 
 def get_user_subscription(user_id: str | None):
     """
-    user_id 기준으로 가장 최근의 active 구독 1개를 가져온다.
+    주어진 user_id 에 대한 'active' 구독 한 개를 반환한다.
     없으면 None.
     """
     if not user_id:
@@ -155,15 +155,14 @@ def get_user_subscription(user_id: str | None):
         resp = (
             supabase
             .table("subscriptions")
-            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,created_at")
+            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at")
             .eq("user_id", user_id)
-            .eq("status", "active")
-            .order("created_at", desc=True)
+            .eq("status", "active")   # active 플랜만 본다
             .limit(1)
             .execute()
         )
     except Exception as e:
-        print("[SUBS] supabase query error:", e)
+        print("[SUBS] error querying subscriptions:", e)
         return None
 
     rows = getattr(resp, "data", None) or []
@@ -171,8 +170,9 @@ def get_user_subscription(user_id: str | None):
         print("[SUBS] no active subscription for user:", user_id)
         return None
 
-    print("[SUBS] subscription row:", rows[0])
-    return rows[0]
+    row = rows[0]
+    print("[SUBS] active subscription:", row)
+    return row
 
 
 def lookup_user_id_by_email(db: Client, email: str | None) -> str | None:
@@ -552,63 +552,70 @@ async def convert_c_text_to_mermaid(
     # 같은 코드면 사용 횟수를 올리지 않기 위해 해시를 만든다
     code_hash = make_code_hash(source_code)
 
-    # ---------------------------
-    # 플랜/쿼터 판별
-    # ---------------------------
-    TEST_EMAIL = "exitgiveme@gmail.com"
-    is_test_account = (user_email == TEST_EMAIL)
-
-    # 기본값: 무료 플랜
-    plan_tier   = "free"        # "free" | "pro" | "expert" | "unlimited"
-    plan_name   = "Free tier"
-    node_limit  = FREE_NODE_LIMIT
-    is_pro_user = False
+    # ===========================
+    # 플랜 / 사용량 계산
+    # ===========================
     usage_count: int | None = None
+
+    # 1) 무제한 테스트 계정
+    is_test_account = (user_email == "exitgiveme@gmail.com")
+
+    # 기본값: Free
+    plan_tier   = "free"            # "free" | "pro" | "expert" | "unlimited"
+    plan_name   = "Free tier"
+    node_limit  = FREE_NODE_LIMIT   # 20
+    is_pro_user = False
     subscription_row = None
 
     if is_test_account:
-        # 테스트 계정: 완전 무제한
-        plan_tier  = "unlimited"
-        plan_name  = "Test account (unlimited)"
-        node_limit = None   # 노드 제한 없음
-        print("[API] test account, no daily/node limit")
+        # 완전 무제한
+        plan_tier   = "unlimited"
+        plan_name   = "Test account (unlimited)"
+        node_limit  = None
+        is_pro_user = True   # 내부적으로는 유료 기능처럼 취급해도 됨
+        print("[API] test account: unlimited usage / no node limit")
+
     else:
-        # Supabase 구독 정보 조회
+        # Supabase에서 active 구독 조회
         subscription_row = get_user_subscription(user_id)
 
         if subscription_row:
             db_plan_tier = (subscription_row.get("plan_tier") or "").lower()
+
             if db_plan_tier in ("pro", "expert", "unlimited", "free"):
                 plan_tier = db_plan_tier
             else:
-                plan_tier = "pro"  # 이상한 값이면 pro 로 fallback
+                plan_tier = "pro"  # 이상한 값이면 pro 로 폴백
 
             plan_name = subscription_row.get("plan_name") or plan_tier.title()
 
             if plan_tier == "expert":
-                node_limit = EXPERT_NODE_LIMIT
+                node_limit = EXPERT_NODE_LIMIT       # 1000
             elif plan_tier == "pro":
-                node_limit = PRO_NODE_LIMIT
+                node_limit = PRO_NODE_LIMIT          # 200
             elif plan_tier == "unlimited":
                 node_limit = None
             else:
-                node_limit = FREE_NODE_LIMIT
+                node_limit = FREE_NODE_LIMIT         # 20
 
-            is_pro_user = plan_tier in ("pro", "expert")
-            print(f"[API] subscription active: user={user_id}, tier={plan_tier}, row={subscription_row}")
+            is_pro_user = plan_tier in ("pro", "expert", "unlimited")
+
+            print(f"[API] active subscription for {user_id}: tier={plan_tier}, row={subscription_row}")
         else:
-            print("[API] no active subscription row for user:", user_id)
-            plan_tier  = "free"
-            plan_name  = "Free tier"
-            node_limit = FREE_NODE_LIMIT
+            # active 구독 없음 → free
+            plan_tier   = "free"
+            plan_name   = "Free tier"
+            node_limit  = FREE_NODE_LIMIT
+            is_pro_user = False
+            print(f"[API] no subscription for {user_id}, using free tier")
 
-        # 무료 플랜(free)에만 일일 제한 적용
+        # Free 플랜에만 일일 사용량 제한 적용
         if plan_tier == "free":
             usage_count = check_daily_limit(user_id, code_hash)
 
-    # ---------------------------
+    # ===========================
     # 플로우차트 생성
-    # ---------------------------
+    # ===========================
     try:
         mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
             source_code,
@@ -631,18 +638,14 @@ async def convert_c_text_to_mermaid(
         if display_name and func_name:
             pattern_start = r"start\s+" + re.escape(func_name) + r"\s*\(\)?"
             pattern_end   = r"end\s+"   + re.escape(func_name) + r"\s*\(\)?"
-
             mermaid = re.sub(pattern_start, f"start {display_name}", mermaid)
             mermaid = re.sub(pattern_end,   f"end {display_name}",   mermaid)
-        # -----------------------------------------------
 
         node_count = len(node_lines)
 
-        # ---------------------------
+        # ===========================
         # 노드 제한 체크
-        # ---------------------------
-        # - 테스트 계정: node_limit=None 이라 항상 통과
-        # - 나머지: plan_tier별 node_limit 기준으로 체크
+        # ===========================
         if node_limit is not None and node_count > node_limit:
             return JSONResponse(
                 status_code=400,
@@ -663,9 +666,9 @@ async def convert_c_text_to_mermaid(
                 },
             )
 
-        # ---------------------------
+        # ===========================
         # 정상 응답
-        # ---------------------------
+        # ===========================
         return JSONResponse(
             {
                 "mermaid": mermaid,
@@ -677,11 +680,9 @@ async def convert_c_text_to_mermaid(
                 "daily_free_limit": DAILY_FREE_LIMIT,
                 "free_node_limit": FREE_NODE_LIMIT,
                 "is_pro_user": is_pro_user,
-
-                # 플랜 정보
                 "plan_name": plan_name,
-                "plan_tier": plan_tier,     # "free" | "pro" | "expert" | "unlimited"
-                "node_limit": node_limit,   # 20 / 200 / 1000 / None
+                "plan_tier": plan_tier,
+                "node_limit": node_limit,
                 "is_test_account": is_test_account,
             }
         )
