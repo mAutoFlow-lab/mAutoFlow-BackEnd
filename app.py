@@ -159,9 +159,10 @@ def get_user_subscription(user_id: str | None):
         resp = (
             supabase
             .table("subscriptions")
-            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at")
+            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,updated_at")
             .eq("user_id", user_id)
             .eq("status", "active")   # active 플랜만 본다
+            .order("updated_at", desc=True)  # 가장 최근 것 우선
             .limit(1)
             .execute()
         )
