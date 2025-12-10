@@ -95,7 +95,7 @@ async def lemon_webhook(request: Request):
 
     payload = {
         "user_id": user_id,
-        "subscription_id": str(subscription_id),
+        "lemon_subscription_id": str(subscription_id),  # 컬럼명 맞추기
         "variant_id": variant_id,
         "plan_tier": plan_tier,
         "status": "active" if status in ("active", "on_trial") else "cancelled",
@@ -110,7 +110,7 @@ async def lemon_webhook(request: Request):
     if event_name in ("subscription_created", "subscription_updated", "subscription_resumed"):
         db.table("subscriptions").upsert(
             payload,
-            on_conflict="subscription_id"
+            on_conflict="lemon_subscription_id"
         ).execute()
         print(f"[LEMON] subscription upsert: user={user_id}, tier={plan_tier}")
 
@@ -118,7 +118,7 @@ async def lemon_webhook(request: Request):
         payload["status"] = "cancelled"
         db.table("subscriptions").upsert(
             payload,
-            on_conflict="subscription_id"
+            on_conflict="lemon_subscription_id"
         ).execute()
         print(f"[LEMON] subscription cancelled: user={user_id}")
 
