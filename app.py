@@ -802,5 +802,42 @@ async def convert_c_text_to_mermaid(
             }
         )
 
+@app.get("/usage")
+async def get_usage(user_id: str):
+    """
+    Return today's usage count for free-tier users.
+    """
+    # 1) 사용자 플랜 조회
+    plan = get_user_plan(user_id)
+    plan_tier = plan.get("plan_tier", "free")
+
+    # 무료가 아니면 사용량 체크할 필요 없음
+    if plan_tier != "free":
+        return {
+            "usage_count": None,   # 무제한
+            "daily_limit": None    # 제한 없음
+        }
+
+    # 2) 오늘 날짜 기준 usage_count 조회
+    today = date.today()
+
+    row = supabase.table("diagram_usage") \
+        .select("count") \
+        .eq("user_id", user_id) \
+        .eq("usage_date", today.isoformat()) \
+        .single() \
+        .execute()
+
+    if row.data:
+        usage_count = row.data["count"]
+    else:
+        usage_count = 0
+
+    return {
+        "usage_count": usage_count,
+        "daily_limit": DAILY_FREE_LIMIT
+    }
+
+
 if __name__ == "__main__":
     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
