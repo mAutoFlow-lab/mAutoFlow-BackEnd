@@ -345,9 +345,10 @@ def extract_full_function_signature(source_code: str, func_name: str) -> str:
     return sig
 
 
-def check_daily_limit(user_id: str, code_hash: str) -> int:
+def _check_daily_limit_memory(user_id: str, code_hash: str) -> int:
     """
-    - user_id 기준으로 오늘 날짜의 사용량을 관리한다.
+    (백업용) 메모리 기반 일일 사용량 카운터.
+    - Supabase DB를 사용할 수 없을 때만 fallback 으로 사용한다.
     - 같은 코드(code_hash)가 들어오면 count 를 증가시키지 않는다.
     - 다른 코드가 들어왔고, 이미 DAILY_FREE_LIMIT 만큼 썼다면 429를 던진다.
     """
@@ -366,7 +367,7 @@ def check_daily_limit(user_id: str, code_hash: str) -> int:
     # 새로운 코드인데, 이미 한도까지 사용한 경우에만 막는다
     if is_new_code and info["count"] >= DAILY_FREE_LIMIT:
         print(
-            f"[USAGE] LIMIT_EXCEEDED user_id={user_id} "
+            f"[USAGE-MEM] LIMIT_EXCEEDED user_id={user_id} "
             f"date={info['date']} count={info['count']}"
         )
         raise HTTPException(
@@ -383,16 +384,119 @@ def check_daily_limit(user_id: str, code_hash: str) -> int:
         info["count"] += 1
         info["last_code_hash"] = code_hash
         print(
-            f"[USAGE] OK (new code) user_id={user_id} "
+            f"[USAGE-MEM] OK (new code) user_id={user_id} "
             f"date={info['date']} count={info['count']}"
         )
     else:
         print(
-            f"[USAGE] OK (same code) user_id={user_id} "
+            f"[USAGE-MEM] OK (same code) user_id={user_id} "
             f"date={info['date']} count={info['count']}"
         )
 
     return info["count"]
+
+def check_daily_limit(user_id: str, code_hash: str) -> int:
+    """
+    Supabase public.diagram_usage 테이블을 사용해서
+    무료 플랜(free) 유저의 일일 사용량을 관리한다.
+
+    - user_id + usage_date 기준으로 한 줄만 유지.
+    - 같은 코드(code_hash)가 다시 들어오면 count를 증가시키지 않는다.
+    - 다른 코드이고, 이미 DAILY_FREE_LIMIT 만큼 썼다면 429를 던진다.
+    - Supabase 클라이언트/쿼리 오류가 나면
+      _check_daily_limit_memory() 로 안전하게 fallback 한다.
+    """
+    today = date.today()
+
+    # 1) Supabase 클라이언트 확보
+    try:
+        db = get_supabase_client()
+    except Exception as e:
+        print("[USAGE] get_supabase_client() failed, fallback to memory:", e)
+        return _check_daily_limit_memory(user_id, code_hash)
+
+    # 2) 오늘 날짜 row 조회
+    try:
+        resp = (
+            db.table("diagram_usage")
+              .select("count,last_code_hash,usage_date")
+              .eq("user_id", user_id)
+              .eq("usage_date", today.isoformat())
+              .limit(1)
+              .execute()
+        )
+    except Exception as e:
+        print("[USAGE] select from diagram_usage failed, fallback to memory:", e)
+        return _check_daily_limit_memory(user_id, code_hash)
+
+    rows = getattr(resp, "data", None) or []
+    if rows:
+        row = rows[0]
+        count = row.get("count") or 0
+        last_hash = row.get("last_code_hash")
+        has_row = True
+    else:
+        count = 0
+        last_hash = None
+        has_row = False
+
+    is_new_code = (last_hash != code_hash)
+
+    # 3) 새로운 코드 + 이미 한도 초과 ⇒ 429
+    if is_new_code and count >= DAILY_FREE_LIMIT:
+        print(
+            f"[USAGE-DB] LIMIT_EXCEEDED user_id={user_id} "
+            f"date={today} count={count}"
+        )
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "DAILY_LIMIT_EXCEEDED",
+                "usage_count": count,
+                "daily_free_limit": DAILY_FREE_LIMIT,
+            },
+        )
+
+    # 4) 같은 코드라면 DB 업데이트 없이 그대로 리턴
+    if not is_new_code:
+        print(
+            f"[USAGE-DB] OK (same code) user_id={user_id} "
+            f"date={today} count={count}"
+        )
+        return count
+
+    # 5) 새로운 코드인 경우: count + 1 후 insert/update
+    new_count = count + 1
+
+    try:
+        if has_row:
+            # 기존 row 업데이트
+            db.table("diagram_usage").update(
+                {
+                    "count": new_count,
+                    "last_code_hash": code_hash,
+                }
+            ).eq("user_id", user_id).eq("usage_date", today.isoformat()).execute()
+        else:
+            # 신규 row 삽입
+            db.table("diagram_usage").insert(
+                {
+                    "user_id": user_id,
+                    "usage_date": today.isoformat(),
+                    "count": new_count,
+                    "last_code_hash": code_hash,
+                }
+            ).execute()
+    except Exception as e:
+        # 사용 자체는 성공시킨 뒤, 로그만 남김
+        print("[USAGE-DB] upsert failed, but allow usage:", e)
+
+    print(
+        f"[USAGE-DB] OK (new code) user_id={user_id} "
+        f"date={today} count={new_count}"
+    )
+    return new_count
+
 
 
 def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
