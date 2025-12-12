@@ -301,6 +301,48 @@ def make_code_hash(code: str) -> str:
     norm = normalize_source(code)
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
+def parse_macro_defines(macro_str: str | None) -> dict:
+    """
+    프론트에서 넘어온 매크로 문자열을 dict로 변환한다.
+    예)
+      "DEBUG;TEST=2;RELEASE"
+      "DEBUG TEST=2"
+      "DEBUG,TEST=2,RELEASE"
+
+    → {"DEBUG": "1", "TEST": "2", "RELEASE": "1"}
+    """
+    if not macro_str:
+        return {}
+
+    result: dict[str, str] = {}
+
+    # 세미콜론, 콤마, 공백, 줄바꿈을 모두 구분자로 취급
+    tokens = re.split(r"[;,\\s]+", macro_str)
+    for tok in tokens:
+        tok = tok.strip()
+        if not tok:
+            continue
+
+        if "=" in tok:
+            name, value = tok.split("=", 1)
+            name = name.strip()
+            value = value.strip()
+        else:
+            name = tok
+            value = "1"   # 값이 없으면 1로 취급
+
+        # C 매크로 이름 규칙에 맞는 것만 허용
+        if not re.match(r"^[A-Za-z_]\\w*$", name):
+            continue
+
+        if not value:
+            value = "1"
+
+        result[name] = value
+
+    return result
+
+
 def extract_full_function_signature(source_code: str, func_name: str) -> str:
     """
     소스 코드 전체에서 해당 함수의 '선언부'를 최대한 찾아서 반환.
@@ -516,7 +558,11 @@ def check_daily_limit(user_id: str, code_hash: str) -> int:
 
 
 
-def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
+def generate_mermaid_auto(
+    source_code: str,
+    branch_shape: str = "rounded",
+    macros: dict | None = None,
+):
     """
     1) 코드에서 함수 목록을 전부 찾는다.
     2) main이 있으면 main, 없으면 첫 번째 함수를 우선 시도한다.
@@ -570,7 +616,12 @@ def generate_mermaid_auto(source_code: str, branch_shape: str = "rounded"):
     # 여기서 풀 시그니처 생성
     full_signature = extract_full_function_signature(source_code, func_name)
 
-    emitter = StructuredFlowEmitter(func_name, branch_shape=branch_shape)
+    # 미니 전처리기용 매크로 dict 전달 (없으면 None → {})
+    emitter = StructuredFlowEmitter(
+        func_name,
+        branch_shape=branch_shape,
+        macros=macros or {},
+    )
     mermaid = emitter.emit_from_body(body)
 
     node_lines = {
@@ -652,6 +703,7 @@ async def convert_c_text_to_mermaid(
     source_code: str = Form(...),
     branch_shape: str = Form("rounded"),
     func_name_style: str = Form("short"),
+    macro_defines: str | None = Form(None),   # 추가
     access_token: str = Form(None),
     user_id: str | None = Form(None),
     user_email: str | None = Form(None),
@@ -666,6 +718,12 @@ async def convert_c_text_to_mermaid(
     user_email = user_email or token_email
 
     print(f"[REQ] /api/convert_text user_id={user_id} email={user_email}")
+
+    # 3) 프론트에서 넘어온 매크로 정의 문자열 파싱
+    macro_dict = parse_macro_defines(macro_defines)
+    if macro_dict:
+        print(f"[REQ] macros={macro_dict}")
+
 
     if not user_id:
         raise HTTPException(status_code=400, detail="MISSING_USER_ID")
@@ -741,6 +799,7 @@ async def convert_c_text_to_mermaid(
         mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
             source_code,
             branch_shape=branch_shape,
+            macros=macro_dict,
         )
 
         # ----- 함수 이름 표시 스타일 적용 (Short / Full) -----
