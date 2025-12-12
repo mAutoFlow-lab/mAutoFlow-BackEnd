@@ -395,6 +395,164 @@ def _block_is_effectively_empty(lines, start, end):
     # 끝까지 돌았는데 유의미한 코드가 없으면 빈 블록
     return True
 
+_pre_if_pattern = re.compile(r'^\s*#(if|ifdef|ifndef|elif|else|endif)\b(.*)$')
+
+def _eval_pp_condition(expr: str, macros: dict) -> bool:
+    """
+    #if / #elif 조건을 단순 평가하는 미니 버전.
+    지원:
+      - defined(FLAG), !defined(FLAG)
+      - FLAG, !FLAG
+      - 숫자 상수 (0, 1, 2 ...)
+      - TEST > 1 같이 간단한 비교식 (매크로 값을 숫자로 치환 후 eval)
+    """
+    expr = expr.strip()
+    if not expr:
+        return False
+
+    # defined(FLAG) 처리
+    def repl_defined(m):
+        name = m.group(1)
+        return "1" if name in macros else "0"
+
+    expr = re.sub(r'defined\s*\(\s*([A-Za-z_]\w*)\s*\)', repl_defined, expr)
+
+    # 식 안에 남은 식별자(매크로 이름)들을 숫자로 치환
+    def repl_ident(m):
+        name = m.group(0)
+        val = macros.get(name, None)
+        if val is None:
+            # 존재만 하면 true 취급하고 싶으면 1, 아니면 0
+            return "0"
+        if isinstance(val, bool):
+            return "1" if val else "0"
+        s = str(val).strip()
+        if re.fullmatch(r"[0-9]+", s):
+            return s
+        # 숫자가 아니면 그냥 1로
+        return "1"
+
+    expr = re.sub(r'\b([A-Za-z_]\w*)\b', repl_ident, expr)
+
+    # C 스타일 논리 연산자 → Python으로 변환
+    expr = expr.replace("&&", " and ").replace("||", " or ")
+    # 단항 ! 를 not 으로 ( != 는 그대로 두기 위해 주의)
+    expr = re.sub(r'(?<![=!<>])!(?!=)', ' not ', expr)
+
+    # 아주 간단한 안전장치: 허용 문자만 남았는지 체크
+    if re.search(r'[^0-9\s\(\)\+\-\*/%<>=!andornot]', expr):
+        # 알 수 없는 문자가 끼어 있으면 False 로 처리
+        return False
+
+    try:
+        return bool(eval(expr, {"__builtins__": {}}, {}))
+    except Exception:
+        return False
+
+def mini_preprocess_lines(lines: list[str], macros: dict) -> list[str]:
+    """
+    간단 전처리기:
+      - #if / #ifdef / #ifndef / #elif / #else / #endif 만 처리
+      - 살아있는 코드 줄만 남기고, 전처리 지시문 라인은 모두 제거
+    """
+    out: list[str] = []
+    stack: list[dict] = []
+    active = True  # 현재 줄이 활성 상태인지
+
+    for line in lines:
+        m = _pre_if_pattern.match(line)
+        if not m:
+            # 전처리 지시문이 아니면, active 일 때만 출력
+            if active:
+                out.append(line)
+            continue
+
+        kind = m.group(1)
+        rest = m.group(2).strip()
+
+        if kind == "if":
+            parent_active = active
+            cond_true = _eval_pp_condition(rest, macros) if parent_active else False
+            frame = {
+                "parent_active": parent_active,
+                "any_taken": bool(cond_true),
+                "current_active": bool(cond_true),
+            }
+            stack.append(frame)
+            active = frame["current_active"]
+            continue
+
+        if kind == "ifdef":
+            parent_active = active
+            cond_true = (rest in macros) if parent_active else False
+            frame = {
+                "parent_active": parent_active,
+                "any_taken": bool(cond_true),
+                "current_active": bool(cond_true),
+            }
+            stack.append(frame)
+            active = frame["current_active"]
+            continue
+
+        if kind == "ifndef":
+            parent_active = active
+            cond_true = (rest not in macros) if parent_active else False
+            frame = {
+                "parent_active": parent_active,
+                "any_taken": bool(cond_true),
+                "current_active": bool(cond_true),
+            }
+            stack.append(frame)
+            active = frame["current_active"]
+            continue
+
+        if kind == "elif":
+            if not stack:
+                # 이상한 구조면 무시
+                continue
+            frame = stack[-1]
+            parent_active = frame["parent_active"]
+            if not parent_active:
+                frame["current_active"] = False
+                active = False
+                continue
+            if frame["any_taken"]:
+                frame["current_active"] = False
+                active = False
+                continue
+            cond_true = _eval_pp_condition(rest, macros)
+            frame["current_active"] = bool(cond_true)
+            if cond_true:
+                frame["any_taken"] = True
+            active = frame["current_active"]
+            continue
+
+        if kind == "else":
+            if not stack:
+                continue
+            frame = stack[-1]
+            parent_active = frame["parent_active"]
+            if not parent_active:
+                frame["current_active"] = False
+                active = False
+                continue
+            if frame["any_taken"]:
+                frame["current_active"] = False
+                active = False
+            else:
+                frame["current_active"] = True
+                frame["any_taken"] = True
+                active = True
+            continue
+
+        if kind == "endif":
+            if not stack:
+                continue
+            frame = stack.pop()
+            active = frame["parent_active"]
+            continue
+
+    return out
 
 
 class StructuredFlowEmitter:
@@ -433,13 +591,16 @@ class StructuredFlowEmitter:
             return header_text[:i]  # 'if ( ... )' 까지만
         return header_text
 
-    def __init__(self, func_name: str, branch_shape: str = "rounded"):
+    def __init__(self, func_name: str, branch_shape: str = "rounded", macros: dict | None = None):
         self.func_name = func_name
         self.branch_shape = branch_shape
         self.lines = []
         self.node_id = 0
         self.infinite_loop_nodes = set()
         self.end_node = None
+
+        # 미니 전처리기용 매크로 정의 (예: {"DEBUG": "1", "TEST": "2"})
+        self.macros = macros or {}
 
         # 루프 안의 break / continue 노드를 관리하기 위한 스택
         self.break_stack = []      # [ [Nid, Nid, ...], ... ]
@@ -589,6 +750,10 @@ class StructuredFlowEmitter:
         self.node_id = 0
 
         raw_lines = body.splitlines()
+
+        # 미니 전처리기: 매크로가 지정되어 있으면, 먼저 전처리 통과
+        if self.macros:
+            raw_lines = mini_preprocess_lines(raw_lines, self.macros)        
 
         self.add("flowchart TD")
         self.add("classDef term fill:#eaffea,stroke:#66cc66,stroke-width:1px;")   # start/end 연두색
@@ -1720,6 +1885,7 @@ class StructuredFlowEmitter:
         finally:
             self.switch_depth -= 1
 
+
 def generate_flowchart_from_file(path: str, func_name: str, branch_shape: str = "rounded") -> str:
     p = Path(path)
     if not p.exists():
@@ -1728,6 +1894,8 @@ def generate_flowchart_from_file(path: str, func_name: str, branch_shape: str = 
     code = p.read_text(encoding="utf-8", errors="ignore")
     body = extract_function_body(code, func_name)
     emitter = StructuredFlowEmitter(func_name, branch_shape=branch_shape)
+    # 또는 나중에:
+    # emitter = StructuredFlowEmitter(func_name, branch_shape=branch_shape, macros=macro_dict)
     return emitter.emit_from_body(body)
 
 
@@ -2174,6 +2342,6 @@ def main():
     print("\n=== 모든 작업 완료! ===")
 
 
-
 if __name__ == "__main__":
     main()
+
