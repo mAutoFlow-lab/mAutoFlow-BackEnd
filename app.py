@@ -317,7 +317,7 @@ def parse_macro_defines(macro_str: str | None) -> dict:
     result: dict[str, str] = {}
 
     # 세미콜론, 콤마, 공백, 줄바꿈을 모두 구분자로 취급
-    tokens = re.split(r"[;,\\s]+", macro_str)
+    tokens = re.split(r"[;,\s]+", macro_str)
     for tok in tokens:
         tok = tok.strip()
         if not tok:
@@ -332,7 +332,7 @@ def parse_macro_defines(macro_str: str | None) -> dict:
             value = "1"   # 값이 없으면 1로 취급
 
         # C 매크로 이름 규칙에 맞는 것만 허용
-        if not re.match(r"^[A-Za-z_]\\w*$", name):
+        if not re.match(r"^[A-Za-z_]\w*$", name):
             continue
 
         if not value:
