@@ -554,6 +554,34 @@ def mini_preprocess_lines(lines: list[str], macros: dict) -> list[str]:
 
     return out
 
+def parse_macro_string(s: str) -> dict:
+    """
+    입력 예:
+      "DEBUG;TEST=2;RELEASE"
+    출력:
+      {"DEBUG": 1, "TEST": 2, "RELEASE": 1}
+    """
+    macros = {}
+    s = (s or "").strip()
+    if not s:
+        return macros
+
+    parts = [p.strip() for p in re.split(r"[;,\n]+", s) if p.strip()]
+    for p in parts:
+        if "=" in p:
+            k, v = p.split("=", 1)
+            k = k.strip()
+            v = v.strip()
+            # 숫자면 int, 아니면 문자열/1 처리
+            if re.fullmatch(r"[0-9]+", v):
+                macros[k] = int(v)
+            else:
+                macros[k] = v
+        else:
+            macros[p] = 1
+    return macros
+
+
 
 class StructuredFlowEmitter:
     """
@@ -1893,9 +1921,11 @@ def generate_flowchart_from_file(path: str, func_name: str, branch_shape: str = 
 
     code = p.read_text(encoding="utf-8", errors="ignore")
     body = extract_function_body(code, func_name)
-    emitter = StructuredFlowEmitter(func_name, branch_shape=branch_shape)
-    # 또는 나중에:
-    # emitter = StructuredFlowEmitter(func_name, branch_shape=branch_shape, macros=macro_dict)
+    emitter = StructuredFlowEmitter(
+        func_name,
+        branch_shape=branch_shape,
+        macros=macros or {},
+    )
     return emitter.emit_from_body(body)
 
 
