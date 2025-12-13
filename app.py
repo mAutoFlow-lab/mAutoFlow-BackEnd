@@ -24,6 +24,23 @@ from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_fun
 
 app = FastAPI()
 
+# ✅ CORS: 프론트 도메인 허용 (export/download 포함)
+ALLOWED_ORIGINS = [
+    "https://mautoflow-frontend.pages.dev",
+    "https://mautoflow-lab.netlify.app",
+    "http://localhost:3000",
+    "http://localhost:8000",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 # --- Supabase client 설정 ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -262,23 +279,6 @@ def verify_access_token(access_token: str | None):
     except JWTError as e:
         print("[AUTH] JWT decode error:", e)
         raise HTTPException(status_code=401, detail="Invalid access_token")
-
-
-# CORS: 프론트 도메인(.netlify.app)을 넣어준다.
-# 개발 중에는 "*" 로 열어둬도 되고, 상용에서는 꼭 도메인으로 제한하자.
-origins = [
-    "https://mautoflow-frontend.pages.dev",  # 새 Cloudflare 프론트
-    "http://localhost:8000",
-    "https://mautoflow-lab.netlify.app",
-]
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,      # 개발 단계에서는 ["*"] 도 가능
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 DEPLOY_VERSION = "v0.0.3"
 DAILY_FREE_LIMIT = 5
@@ -990,26 +990,26 @@ async def export_diagram(
     user_id = user_id or token_user_id
     user_email = user_email or token_email
 
+    print(f"[REQ] /api/export user_id={user_id} email={user_email} format={out_format}")
+    print(f"[REQ] /api/export source_code_len={len(source_code) if source_code else 0}")
+        
     if not user_id:
         raise HTTPException(status_code=400, detail="MISSING_USER_ID")
 
     macro_dict = parse_macro_defines(macro_defines)
 
-    # 2) Mermaid 생성 (기존 로직 재사용)
+    # 2) Mermaid 생성
     mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
         source_code,
         branch_shape=branch_shape,
         macros=macro_dict,
     )
 
-    # (선택) 노드 제한/플랜 제한을 여기에도 동일하게 적용하고 싶으면
-    # convert_text의 “플랜/usage 계산 블록”을 함수로 빼서 양쪽에서 호출하면 깔끔함.
-
     # 3) PNG/PDF 렌더
     out_format = (out_format or "png").lower()
     out_path = _render_mermaid_to_file(mermaid, out_format)
 
-    # 4) 파일로 응답 (다운로드 헤더 포함)
+    # 4) 파일로 응답
     filename = _download_filename(func_name, out_format)
     media_type = "image/png" if out_format == "png" else "application/pdf"
 
@@ -1018,6 +1018,13 @@ async def export_diagram(
         media_type=media_type,
         filename=filename,
     )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        # ✅ 여기서 Render 실패(stderr 등)가 detail로 내려감
+        print("[EXPORT] failed:", repr(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/usage")
