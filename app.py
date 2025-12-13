@@ -19,6 +19,7 @@ import re
 import requests
 from supabase import create_client, Client
 from jose import jwt, JWTError
+from typing import Optional
 
 from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_function_names
 
@@ -802,6 +803,9 @@ async def convert_c_text_to_mermaid(
     user_id: str | None = Form(None),
     user_email: str | None = Form(None),
 ):
+    print("[REQ] has_token:", bool(access_token), "has_source:", bool(source_code))
+
+    
     # 1) 토큰 검증 + 토큰에서 user 정보 꺼내기
     token_info = verify_access_token(access_token)
     token_user_id = token_info.get("user_id")
@@ -975,8 +979,13 @@ async def convert_c_text_to_mermaid(
 
 @app.post("/api/export")
 async def export_diagram(
-    source_code: str = Form(...),
+    source_code: Optional[str] = Form(None),   # ✅ 필수 → optional
     out_format: str = Form("png"),
+
+    # ✅ 과거 프론트 호환: svg / format도 받기
+    svg: Optional[str] = Form(None),
+    format: Optional[str] = Form(None),
+    
     branch_shape: str = Form("rounded"),
     macro_defines: str | None = Form(None),
     access_token: str = Form(None),
@@ -984,46 +993,49 @@ async def export_diagram(
     user_email: str | None = Form(None),
 ):
     try:
-        # 1) 토큰 검증
+        # ✅ out_format 결정: format(구 프론트) 우선, 없으면 out_format 사용
+        if format and not out_format:
+            out_format = format
+        if format:
+            out_format = format  # 구 프론트가 보내는 "format" 우선 적용
+        out_format = (out_format or "png").lower()
+
+        # ✅ 입력 유효성 체크 (422 대신 우리가 제어하는 400으로 반환)
+        if not source_code and not svg:
+            raise HTTPException(status_code=400, detail="MISSING_SOURCE_OR_SVG")
+
+        print("[EXPORT] has_token:", bool(access_token), "has_source:", bool(source_code), "has_svg:", bool(svg))
+
+        # ✅ 토큰 검증 (access_token이 없으면 401)
         token_info = verify_access_token(access_token)
         token_user_id = token_info.get("user_id")
         token_email   = token_info.get("email")
         user_id = user_id or token_user_id
         user_email = user_email or token_email
 
-        print(f"[REQ] /api/export user_id={user_id} email={user_email} format={out_format}")
-
         if not user_id:
             raise HTTPException(status_code=400, detail="MISSING_USER_ID")
 
         macro_dict = parse_macro_defines(macro_defines)
 
-        # 2) Mermaid 생성
-        mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
-            source_code,
-            branch_shape=branch_shape,
-            macros=macro_dict,
-        )
+        if source_code:
+            mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
+                source_code,
+                branch_shape=branch_shape,
+                macros=macro_dict,
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="LEGACY_SVG_EXPORT_NOT_SUPPORTED_USE_SOURCE_CODE"
+            )
 
-        # 3) PNG/PDF 렌더
-        out_format = (out_format or "png").lower()
+        # ✅ 여기서 렌더링은 1번만
         out_path = _render_mermaid_to_file(mermaid, out_format)
-
-        # 4) 파일 응답
         filename = _download_filename(func_name, out_format)
         media_type = "image/png" if out_format == "png" else "application/pdf"
 
-        return FileResponse(
-            out_path,
-            media_type=media_type,
-            filename=filename,
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        print("[EXPORT] failed:", repr(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        return FileResponse(out_path, media_type=media_type, filename=filename)
 
 
 @app.get("/usage")
