@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse, FileResponse
 import tempfile
 import subprocess
 from pathlib import Path
+import json
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from datetime import date, datetime
@@ -673,36 +674,47 @@ def generate_mermaid_auto(
     # full_signature 를 함께 리턴
     return mermaid, func_name, node_lines, full_signature
 
+# Mermaid CLI 설정 (PDF/PNG 글자 누락 방지용)
+_MERMAID_CLI_CONFIG = {
+    "flowchart": {
+        "htmlLabels": False   # ⭐ 핵심
+    },
+    "theme": "default"
+}
 
 def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
     """
-    mermaid-cli(mmdc)를 이용해 mermaid_text를 png/pdf로 렌더링해서
-    생성된 파일 경로를 리턴한다.
-    out_format: "png" | "pdf"
+    mermaid-cli(mmdc)를 이용해 mermaid_text를 png/pdf로 렌더링
     """
     out_format = (out_format or "").lower()
     if out_format not in ("png", "pdf"):
         raise ValueError("Invalid format. Use png or pdf.")
 
-    # 임시 작업 폴더
     workdir = Path(tempfile.mkdtemp(prefix="mautoflow_"))
     mmd_path = workdir / "diagram.mmd"
     out_path = workdir / f"diagram.{out_format}"
+    cfg_path = workdir / "mmdc-config.json"
 
     mmd_path.write_text(mermaid_text, encoding="utf-8")
+    cfg_path.write_text(json.dumps(_MERMAID_CLI_CONFIG), encoding="utf-8")
 
-    # mmdc로 변환
-    # (서버에 mermaid-cli가 설치되어 있어야 함: npm i -g @mermaid-js/mermaid-cli)
-    cmd = ["mmdc", "-i", str(mmd_path), "-o", str(out_path)]
+    cmd = [
+        "mmdc",
+        "-i", str(mmd_path),
+        "-o", str(out_path),
+        "-c", str(cfg_path),
+    ]
+
+    # PDF 잘림 방지 (선택)
+    if out_format == "pdf":
+        cmd.append("--pdfFit")
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
-    except Exception as e:
-        # stderr 포함해서 디버깅 가능하게 메시지 강화
-        err = ""
-        if hasattr(e, "stderr") and e.stderr:
-            err = str(e.stderr)
-        raise RuntimeError(f"mmdc failed: {e} {err}")
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"mmdc failed:\nstdout={e.stdout}\nstderr={e.stderr}"
+        )
 
     if not out_path.exists():
         raise RuntimeError("Render output not created.")
