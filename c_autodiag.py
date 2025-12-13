@@ -397,6 +397,40 @@ def _block_is_effectively_empty(lines, start, end):
 
 _pre_if_pattern = re.compile(r'^\s*#(if|ifdef|ifndef|elif|else|endif)\b(.*)$')
 
+
+# C 정수 리터럴 suffix 제거 + (필요 시) 8진수 변환
+_C_INT_LIT = re.compile(
+    r"""
+    (?P<num>
+        0[xX][0-9A-Fa-f]+ |      # hex
+        0[bB][01]+        |      # binary (gcc/ext 포함)
+        0[0-7]+           |      # octal (C 스타일)
+        [0-9]+                   # decimal
+    )
+    (?P<suf>[uUlL]+)?            # U, L, UL, LL, ULL 등
+    \b
+    """,
+    re.VERBOSE,
+)
+
+def _normalize_c_int_literals(expr: str) -> str:
+    """
+    expr 안의 C 정수 리터럴에서 suffix(U/L/UL/LL...) 제거.
+    또한 C의 8진수(예: 0755)를 Python eval 가능하도록 0o755로 변환.
+    """
+    def repl(m: re.Match) -> str:
+        num = m.group("num")
+        # octal: 0[0-7]+ 이고 hex/binary가 아닌 경우만 변환
+        if len(num) >= 2 and num[0] == "0" and num[1].isdigit() and not (
+            num.startswith(("0x", "0X", "0b", "0B"))
+        ):
+            return "0o" + num[1:]
+        return num
+
+    return _C_INT_LIT.sub(repl, expr)
+
+
+
 def _eval_pp_condition(expr: str, macros: dict) -> bool:
     """
     #if / #elif 조건을 단순 평가하는 미니 버전.
@@ -407,6 +441,8 @@ def _eval_pp_condition(expr: str, macros: dict) -> bool:
       - TEST > 1 같이 간단한 비교식 (매크로 값을 숫자로 치환 후 eval)
     """
     expr = expr.strip()
+    expr = _normalize_c_int_literals(expr)
+    
     if not expr:
         return False
 
@@ -427,8 +463,12 @@ def _eval_pp_condition(expr: str, macros: dict) -> bool:
         if isinstance(val, bool):
             return "1" if val else "0"
         s = str(val).strip()
-        if re.fullmatch(r"[0-9]+", s):
+        s = _normalize_c_int_literals(s)
+
+        # normalize 후, Python eval 가능한 숫자 형태면 그대로 사용
+        if re.fullmatch(r"(0[xX][0-9A-Fa-f]+|0[bB][01]+|0o[0-7]+|[0-9]+)", s):
             return s
+
         # 숫자가 아니면 그냥 1로
         return "1"
 
@@ -573,8 +613,9 @@ def parse_macro_string(s: str) -> dict:
             k = k.strip()
             v = v.strip()
             # 숫자면 int, 아니면 문자열/1 처리
-            if re.fullmatch(r"[0-9]+", v):
-                macros[k] = int(v)
+            vv = _normalize_c_int_literals(v)
+            if re.fullmatch(r"(0[xX][0-9A-Fa-f]+|0[bB][01]+|0o[0-7]+|[0-9]+)", vv):
+                macros[k] = int(vv, 0)  # 0x / 0b / 0o / 10 모두 처리
             else:
                 macros[k] = v
         else:
