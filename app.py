@@ -178,64 +178,69 @@ async def lemon_webhook(request: Request):
 
 
 def get_user_subscription(user_id: str | None):
-    """
-    주어진 user_id 에 대한 'active' 구독 한 개를 반환한다.
-    없으면 None.
-    """
     if not user_id:
         return None
 
-    if supabase is None:
-        print("[SUBS] supabase client not initialized")
+    try:
+        db = get_supabase_client()
+    except Exception as e:
+        print("[SUBS] get_supabase_client failed:", e)
         return None
 
     try:
         resp = (
-            supabase
-            .table("subscriptions")
-            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,updated_at")
-            .eq("user_id", user_id)
-            .eq("status", "active")   # active 플랜만 본다
-            .order("updated_at", desc=True)  # 가장 최근 것 우선
-            .limit(1)
-            .execute()
+            db.table("subscriptions")
+              .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,updated_at")
+              .eq("user_id", user_id)
+              .eq("status", "active")
+              .order("updated_at", desc=True)
+              .limit(1)
+              .execute()
         )
     except Exception as e:
         print("[SUBS] error querying subscriptions:", e)
         return None
 
     rows = getattr(resp, "data", None) or []
-    if not rows:
-        print("[SUBS] no active subscription for user:", user_id)
-        return None
-
-    row = rows[0]
-    print("[SUBS] active subscription:", row)
-    return row
+    return rows[0] if rows else None
 
 
 def get_user_plan(user_id: str | None) -> dict:
     """
-    /usage 같은 곳에서 쓰기 위한 '플랜 조회' 헬퍼.
-    - active subscription 있으면 그 plan_tier/plan_name 반환
-    - 없으면 free로 반환
+    user_id 기준으로 현재 플랜 정보를 계산해서 반환.
+    - subscriptions 테이블에서 status='active' 1건을 가져와 plan_tier를 결정
+    - 없으면 free
     """
+    # 기본값
+    plan_tier = "free"
+    plan_name = "Free tier"
+    node_limit = FREE_NODE_LIMIT
+
     if not user_id:
-        return {"plan_tier": "free", "plan_name": "Free tier"}
+        return {"plan_tier": plan_tier, "plan_name": plan_name, "node_limit": node_limit}
 
     sub = get_user_subscription(user_id)
     if not sub:
-        return {"plan_tier": "free", "plan_name": "Free tier"}
+        return {"plan_tier": plan_tier, "plan_name": plan_name, "node_limit": node_limit}
 
-    plan_tier = (sub.get("plan_tier") or "free").lower()
+    db_plan_tier = (sub.get("plan_tier") or "").lower()
+    if db_plan_tier in ("free", "pro", "expert", "unlimited"):
+        plan_tier = db_plan_tier
+    else:
+        plan_tier = "pro"  # 이상값 방어
+
     plan_name = sub.get("plan_name") or plan_tier.title()
 
-    # 이상한 값 방어
-    if plan_tier not in ("free", "pro", "expert", "unlimited"):
-        plan_tier = "pro"
+    if plan_tier == "expert":
+        node_limit = EXPERT_NODE_LIMIT
+    elif plan_tier == "pro":
+        node_limit = PRO_NODE_LIMIT
+    elif plan_tier == "unlimited":
+        node_limit = None
+    else:
+        node_limit = FREE_NODE_LIMIT
 
-    return {"plan_tier": plan_tier, "plan_name": plan_name}
-
+    return {"plan_tier": plan_tier, "plan_name": plan_name, "node_limit": node_limit}
 
 
 def lookup_user_id_by_email(db: Client, email: str | None) -> str | None:
@@ -1087,14 +1092,16 @@ async def get_usage(user_id: str):
     today = date.today()
 
     db = get_supabase_client()
-    row = db.table("diagram_usage") \
-        .select("count") \
-        .eq("user_id", user_id) \
-        .eq("usage_date", today.isoformat()) \
-        .single() \
-        .execute()
+    
+    resp = (db.table("diagram_usage")
+              .select("count")
+              .eq("user_id", user_id)
+              .eq("usage_date", today.isoformat())
+              .limit(1)
+              .execute())
 
-    usage_count = row.data["count"] if row.data else 0
+    rows = getattr(resp, "data", None) or []
+    usage_count = rows[0]["count"] if rows else 0
     return {"usage_count": usage_count, "daily_limit": DAILY_FREE_LIMIT}
 
 
