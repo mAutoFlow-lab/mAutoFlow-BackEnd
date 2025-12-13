@@ -214,6 +214,30 @@ def get_user_subscription(user_id: str | None):
     return row
 
 
+def get_user_plan(user_id: str | None) -> dict:
+    """
+    /usage 같은 곳에서 쓰기 위한 '플랜 조회' 헬퍼.
+    - active subscription 있으면 그 plan_tier/plan_name 반환
+    - 없으면 free로 반환
+    """
+    if not user_id:
+        return {"plan_tier": "free", "plan_name": "Free tier"}
+
+    sub = get_user_subscription(user_id)
+    if not sub:
+        return {"plan_tier": "free", "plan_name": "Free tier"}
+
+    plan_tier = (sub.get("plan_tier") or "free").lower()
+    plan_name = sub.get("plan_name") or plan_tier.title()
+
+    # 이상한 값 방어
+    if plan_tier not in ("free", "pro", "expert", "unlimited"):
+        plan_tier = "pro"
+
+    return {"plan_tier": plan_tier, "plan_name": plan_name}
+
+
+
 def lookup_user_id_by_email(db: Client, email: str | None) -> str | None:
     """
     Lemon 구독 webhook payload 안의 user_email 로
@@ -1036,7 +1060,12 @@ async def export_diagram(
         media_type = "image/png" if out_format == "png" else "application/pdf"
 
         return FileResponse(out_path, media_type=media_type, filename=filename)
-
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("[EXPORT] failed:", repr(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/usage")
 async def get_usage(user_id: str):
@@ -1057,22 +1086,16 @@ async def get_usage(user_id: str):
     # 2) 오늘 날짜 기준 usage_count 조회
     today = date.today()
 
-    row = supabase.table("diagram_usage") \
+    db = get_supabase_client()
+    row = db.table("diagram_usage") \
         .select("count") \
         .eq("user_id", user_id) \
         .eq("usage_date", today.isoformat()) \
         .single() \
         .execute()
 
-    if row.data:
-        usage_count = row.data["count"]
-    else:
-        usage_count = 0
-
-    return {
-        "usage_count": usage_count,
-        "daily_limit": DAILY_FREE_LIMIT
-    }
+    usage_count = row.data["count"] if row.data else 0
+    return {"usage_count": usage_count, "daily_limit": DAILY_FREE_LIMIT}
 
 
 if __name__ == "__main__":
