@@ -458,16 +458,14 @@ def _eval_pp_condition(expr: str, macros: dict) -> bool:
         name = m.group(0)
         val = macros.get(name, None)
         if val is None:
-            # 존재만 하면 true 취급하고 싶으면 1, 아니면 0
             return "0"
         if isinstance(val, bool):
             return "1" if val else "0"
-        s = str(val).strip()
-        s = _normalize_c_int_literals(s)
 
-        # normalize 후, Python eval 가능한 숫자 형태면 그대로 사용
-        if re.fullmatch(r"(0[xX][0-9A-Fa-f]+|0[bB][01]+|0o[0-7]+|[0-9]+)", s):
-            return s
+        s = str(val).strip()
+        parsed = _try_parse_c_int_literal(s)
+        if parsed is not None:
+            return str(parsed)
 
         # 숫자가 아니면 그냥 1로
         return "1"
@@ -594,6 +592,44 @@ def mini_preprocess_lines(lines: list[str], macros: dict) -> list[str]:
 
     return out
 
+
+# C 정수 리터럴 (10진/16진/2진/8진) + 접미사(U/L/UL/ULL...) 처리
+_INT_LIT_RE = re.compile(
+    r"""^\s*
+    (?P<num>
+        0[xX][0-9A-Fa-f]+ |
+        0[bB][01]+ |
+        0[0-7]* |
+        [1-9][0-9]* |
+        0
+    )
+    (?P<suf>[uUlL]{0,4})
+    \s*$""",
+    re.X,
+)
+
+def _try_parse_c_int_literal(s: str) -> int | None:
+    if s is None:
+        return None
+    m = _INT_LIT_RE.match(str(s))
+    if not m:
+        return None
+    num = m.group("num")
+
+    try:
+        # 0x / 0b 는 int(...,0)로 OK
+        if num.startswith(("0x", "0X", "0b", "0B")):
+            return int(num, 0)
+
+        # "077" 같은 C 스타일 8진수 처리
+        if len(num) >= 2 and num[0] == "0" and num[1].isdigit():
+            return int(num, 8)
+
+        # 나머지 (0, 10진)
+        return int(num, 10)
+    except Exception:
+        return None
+
 def parse_macro_string(s: str) -> dict:
     """
     입력 예:
@@ -613,9 +649,9 @@ def parse_macro_string(s: str) -> dict:
             k = k.strip()
             v = v.strip()
             # 숫자면 int, 아니면 문자열/1 처리
-            vv = _normalize_c_int_literals(v)
-            if re.fullmatch(r"(0[xX][0-9A-Fa-f]+|0[bB][01]+|0o[0-7]+|[0-9]+)", vv):
-                macros[k] = int(vv, 0)  # 0x / 0b / 0o / 10 모두 처리
+            parsed = _try_parse_c_int_literal(v)
+            if parsed is not None:
+                macros[k] = parsed
             else:
                 macros[k] = v
         else:
@@ -1955,13 +1991,14 @@ class StructuredFlowEmitter:
             self.switch_depth -= 1
 
 
-def generate_flowchart_from_file(path: str, func_name: str, branch_shape: str = "rounded") -> str:
+def generate_flowchart_from_file(path: str, func_name: str, branch_shape: str = "rounded", macros: dict | None = None) -> str:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(path)
 
     code = p.read_text(encoding="utf-8", errors="ignore")
     body = extract_function_body(code, func_name)
+
     emitter = StructuredFlowEmitter(
         func_name,
         branch_shape=branch_shape,
