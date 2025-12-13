@@ -976,53 +976,52 @@ async def convert_c_text_to_mermaid(
 @app.post("/api/export")
 async def export_diagram(
     source_code: str = Form(...),
-    out_format: str = Form("png"),          # "png" | "pdf"
+    out_format: str = Form("png"),
     branch_shape: str = Form("rounded"),
     macro_defines: str | None = Form(None),
     access_token: str = Form(None),
     user_id: str | None = Form(None),
     user_email: str | None = Form(None),
 ):
-    # 1) 토큰 검증 (convert_text와 동일)
-    token_info = verify_access_token(access_token)
-    token_user_id = token_info.get("user_id")
-    token_email   = token_info.get("email")
-    user_id = user_id or token_user_id
-    user_email = user_email or token_email
+    try:
+        # 1) 토큰 검증
+        token_info = verify_access_token(access_token)
+        token_user_id = token_info.get("user_id")
+        token_email   = token_info.get("email")
+        user_id = user_id or token_user_id
+        user_email = user_email or token_email
 
-    print(f"[REQ] /api/export user_id={user_id} email={user_email} format={out_format}")
-    print(f"[REQ] /api/export source_code_len={len(source_code) if source_code else 0}")
-        
-    if not user_id:
-        raise HTTPException(status_code=400, detail="MISSING_USER_ID")
+        print(f"[REQ] /api/export user_id={user_id} email={user_email} format={out_format}")
 
-    macro_dict = parse_macro_defines(macro_defines)
+        if not user_id:
+            raise HTTPException(status_code=400, detail="MISSING_USER_ID")
 
-    # 2) Mermaid 생성
-    mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
-        source_code,
-        branch_shape=branch_shape,
-        macros=macro_dict,
-    )
+        macro_dict = parse_macro_defines(macro_defines)
 
-    # 3) PNG/PDF 렌더
-    out_format = (out_format or "png").lower()
-    out_path = _render_mermaid_to_file(mermaid, out_format)
+        # 2) Mermaid 생성
+        mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
+            source_code,
+            branch_shape=branch_shape,
+            macros=macro_dict,
+        )
 
-    # 4) 파일로 응답
-    filename = _download_filename(func_name, out_format)
-    media_type = "image/png" if out_format == "png" else "application/pdf"
+        # 3) PNG/PDF 렌더
+        out_format = (out_format or "png").lower()
+        out_path = _render_mermaid_to_file(mermaid, out_format)
 
-    return FileResponse(
-        out_path,
-        media_type=media_type,
-        filename=filename,
-    )
+        # 4) 파일 응답
+        filename = _download_filename(func_name, out_format)
+        media_type = "image/png" if out_format == "png" else "application/pdf"
+
+        return FileResponse(
+            out_path,
+            media_type=media_type,
+            filename=filename,
+        )
 
     except HTTPException:
         raise
     except Exception as e:
-        # ✅ 여기서 Render 실패(stderr 등)가 detail로 내려감
         print("[EXPORT] failed:", repr(e))
         raise HTTPException(status_code=500, detail=str(e))
 
