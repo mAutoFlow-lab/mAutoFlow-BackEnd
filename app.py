@@ -1,7 +1,10 @@
 # app.py - mAutoFlow 백엔드 전용
 
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+import tempfile
+import subprocess
+from pathlib import Path
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from datetime import date, datetime
@@ -671,6 +674,47 @@ def generate_mermaid_auto(
     return mermaid, func_name, node_lines, full_signature
 
 
+def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
+    """
+    mermaid-cli(mmdc)를 이용해 mermaid_text를 png/pdf로 렌더링해서
+    생성된 파일 경로를 리턴한다.
+    out_format: "png" | "pdf"
+    """
+    out_format = (out_format or "").lower()
+    if out_format not in ("png", "pdf"):
+        raise ValueError("Invalid format. Use png or pdf.")
+
+    # 임시 작업 폴더
+    workdir = Path(tempfile.mkdtemp(prefix="mautoflow_"))
+    mmd_path = workdir / "diagram.mmd"
+    out_path = workdir / f"diagram.{out_format}"
+
+    mmd_path.write_text(mermaid_text, encoding="utf-8")
+
+    # mmdc로 변환
+    # (서버에 mermaid-cli가 설치되어 있어야 함: npm i -g @mermaid-js/mermaid-cli)
+    cmd = ["mmdc", "-i", str(mmd_path), "-o", str(out_path)]
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except Exception as e:
+        # stderr 포함해서 디버깅 가능하게 메시지 강화
+        err = ""
+        if hasattr(e, "stderr") and e.stderr:
+            err = str(e.stderr)
+        raise RuntimeError(f"mmdc failed: {e} {err}")
+
+    if not out_path.exists():
+        raise RuntimeError("Render output not created.")
+
+    return str(out_path)
+
+
+def _download_filename(func_name: str | None, ext: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_]+", "_", (func_name or "diagram").strip())
+    return f"{safe}.{ext}"
+
+
 @app.get("/debug/supabase")
 async def debug_supabase():
     # supabase가 globals에 있는지, 타입이 뭔지 확인
@@ -915,6 +959,54 @@ async def convert_c_text_to_mermaid(
                 "error": str(e),
             }
         )
+
+
+@app.post("/api/export")
+async def export_diagram(
+    source_code: str = Form(...),
+    out_format: str = Form("png"),          # "png" | "pdf"
+    branch_shape: str = Form("rounded"),
+    macro_defines: str | None = Form(None),
+    access_token: str = Form(None),
+    user_id: str | None = Form(None),
+    user_email: str | None = Form(None),
+):
+    # 1) 토큰 검증 (convert_text와 동일)
+    token_info = verify_access_token(access_token)
+    token_user_id = token_info.get("user_id")
+    token_email   = token_info.get("email")
+    user_id = user_id or token_user_id
+    user_email = user_email or token_email
+
+    if not user_id:
+        raise HTTPException(status_code=400, detail="MISSING_USER_ID")
+
+    macro_dict = parse_macro_defines(macro_defines)
+
+    # 2) Mermaid 생성 (기존 로직 재사용)
+    mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
+        source_code,
+        branch_shape=branch_shape,
+        macros=macro_dict,
+    )
+
+    # (선택) 노드 제한/플랜 제한을 여기에도 동일하게 적용하고 싶으면
+    # convert_text의 “플랜/usage 계산 블록”을 함수로 빼서 양쪽에서 호출하면 깔끔함.
+
+    # 3) PNG/PDF 렌더
+    out_format = (out_format or "png").lower()
+    out_path = _render_mermaid_to_file(mermaid, out_format)
+
+    # 4) 파일로 응답 (다운로드 헤더 포함)
+    filename = _download_filename(func_name, out_format)
+    media_type = "image/png" if out_format == "png" else "application/pdf"
+
+    return FileResponse(
+        out_path,
+        media_type=media_type,
+        filename=filename,
+    )
+
 
 @app.get("/usage")
 async def get_usage(user_id: str):
