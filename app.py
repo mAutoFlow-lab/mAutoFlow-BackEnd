@@ -301,6 +301,40 @@ def make_code_hash(code: str) -> str:
     norm = normalize_source(code)
     return hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
+
+# C 정수 리터럴 (10진/16진/2진/8진) + 접미사(U/L/UL/ULL...) 처리
+_INT_LIT_RE = re.compile(
+    r"""^\s*
+    (?P<num>
+        0[xX][0-9A-Fa-f]+ |
+        0[bB][01]+ |
+        0[0-7]+ |
+        [1-9][0-9]* |
+        0
+    )
+    (?P<suf>[uUlL]{0,4})
+    \s*$""",
+    re.X,
+)
+
+def _try_parse_c_int_literal(s: str):
+    """
+    예) '2U' -> 2, '0x10UL' -> 16, '077U' -> 63, '0b1010u' -> 10
+    실패하면 None
+    """
+    if s is None:
+        return None
+    m = _INT_LIT_RE.match(str(s))
+    if not m:
+        return None
+    num = m.group("num")
+    try:
+        # 0x/0b/0(8진)/10진 자동 처리
+        return int(num, 0)
+    except Exception:
+        return None
+
+
 def parse_macro_defines(macro_str: str | None) -> dict:
     """
     프론트에서 넘어온 매크로 문자열을 dict로 변환한다.
@@ -314,7 +348,7 @@ def parse_macro_defines(macro_str: str | None) -> dict:
     if not macro_str:
         return {}
 
-    result: dict[str, str] = {}
+    result: dict[str, object] = {}
 
     # 세미콜론, 콤마, 공백, 줄바꿈을 모두 구분자로 취급
     tokens = re.split(r"[;,\s]+", macro_str)
@@ -338,7 +372,11 @@ def parse_macro_defines(macro_str: str | None) -> dict:
         if not value:
             value = "1"
 
-        result[name] = value
+        parsed = _try_parse_c_int_literal(value)
+        if parsed is not None:
+            result[name] = parsed
+        else:
+            result[name] = value
 
     return result
 
