@@ -17,6 +17,7 @@ import hmac        # webhook 검증용
 import datetime as dt
 import re
 import requests
+import traceback
 from supabase import create_client, Client
 from jose import jwt, JWTError
 from typing import Optional
@@ -712,13 +713,18 @@ _MERMAID_CLI_CONFIG = {
     "theme": "default"
 }
 
+import shutil
+
 def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
-    """
-    mermaid-cli(mmdc)를 이용해 mermaid_text를 png/pdf로 렌더링
-    """
     out_format = (out_format or "").lower()
     if out_format not in ("png", "pdf"):
         raise ValueError("Invalid format. Use png or pdf.")
+
+    # ✅ mmdc 존재 여부 먼저 체크 (여기서 거의 잡힘)
+    if shutil.which("mmdc") is None:
+        raise RuntimeError(
+            "mmdc not found. Install @mermaid-js/mermaid-cli and ensure it's in PATH."
+        )
 
     workdir = Path(tempfile.mkdtemp(prefix="mautoflow_"))
     mmd_path = workdir / "diagram.mmd"
@@ -728,23 +734,18 @@ def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
     mmd_path.write_text(mermaid_text, encoding="utf-8")
     cfg_path.write_text(json.dumps(_MERMAID_CLI_CONFIG), encoding="utf-8")
 
-    cmd = [
-        "mmdc",
-        "-i", str(mmd_path),
-        "-o", str(out_path),
-        "-c", str(cfg_path),
-    ]
-
-    # PDF 잘림 방지 (선택)
+    cmd = ["mmdc", "-i", str(mmd_path), "-o", str(out_path), "-c", str(cfg_path)]
     if out_format == "pdf":
         cmd.append("--pdfFit")
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except FileNotFoundError as e:
+        # ✅ 여기로 오면 “진짜로 mmdc가 없음”
+        raise RuntimeError(f"mmdc execute failed (not found): {e}")
     except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f"mmdc failed:\nstdout={e.stdout}\nstderr={e.stderr}"
-        )
+        # ✅ 여기로 오면 “mmdc는 있는데 실행 중 실패”
+        raise RuntimeError(f"mmdc failed:\nstdout={e.stdout}\nstderr={e.stderr}")
 
     if not out_path.exists():
         raise RuntimeError("Render output not created.")
@@ -1070,6 +1071,7 @@ async def export_diagram(
         raise
     except Exception as e:
         print("[EXPORT] failed:", repr(e))
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/usage")
