@@ -21,6 +21,8 @@ import traceback
 from supabase import create_client, Client
 from jose import jwt, JWTError
 from typing import Optional
+from fastapi import Header
+from uuid import UUID
 
 from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_function_names
 
@@ -65,6 +67,48 @@ LEMON_VARIANT_TO_TIER = {
     1134483: "pro",
 }
 
+
+@app.post("/api/share/create")
+async def create_share(
+    mermaid_code: str = Form(...),
+    access_token: str = Form(...)
+):
+    user = verify_access_token(access_token)
+    user_id = user["id"]
+
+    res = supabase.table("shared_diagrams").insert({
+        "owner_user_id": user_id,
+        "mermaid_code": mermaid_code
+    }).execute()
+
+    if not res.data:
+        raise HTTPException(status_code=500, detail="Failed to create share")
+
+    share_id = res.data[0]["id"]
+    return {"share_id": share_id}
+
+
+@app.get("/api/share/{share_id}")
+async def get_shared_diagram(
+    share_id: UUID,
+    authorization: str = Header(None)
+):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+
+    access_token = authorization.split(" ", 1)[1]
+    verify_access_token(access_token)
+
+    res = supabase.table("shared_diagrams") \
+        .select("mermaid_code") \
+        .eq("id", str(share_id)) \
+        .single() \
+        .execute()
+
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Shared diagram not found")
+
+    return res.data
 
 
 @app.post("/webhook/lemon")
