@@ -23,6 +23,7 @@ from jose import jwt, JWTError
 from typing import Optional
 from fastapi import Header
 from uuid import UUID
+from uuid import uuid4  # ✅ 파일 상단 import 구역에 추가 (UUID 이미 있으니 같이 둬도 됨)
 
 from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_function_names
 
@@ -68,24 +69,36 @@ LEMON_VARIANT_TO_TIER = {
 }
 
 
+
 @app.post("/api/share/create")
 async def create_share(
     mermaid_code: str = Form(...),
     access_token: str = Form(...)
 ):
-    user = verify_access_token(access_token)
-    user_id = user["id"]
+    token_info = verify_access_token(access_token)
 
-    res = supabase.table("shared_diagrams").insert({
+    # ✅ (수정 1) user["id"] -> token_info["user_id"]
+    user_id = token_info.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: no user_id")
+
+    # ✅ (수정 2) 전역 supabase 대신 안전한 getter 사용
+    db = get_supabase_client()
+
+    # ✅ (수정 3) id 직접 생성해서 넣기 (테이블 default 없어도 안전)
+    share_id = str(uuid4())
+
+    res = db.table("shared_diagrams").insert({
+        "id": share_id,
         "owner_user_id": user_id,
         "mermaid_code": mermaid_code
     }).execute()
 
-    if not res.data:
+    if not getattr(res, "data", None):
         raise HTTPException(status_code=500, detail="Failed to create share")
 
-    share_id = res.data[0]["id"]
     return {"share_id": share_id}
+
 
 
 @app.get("/api/share/{share_id}")
@@ -99,16 +112,19 @@ async def get_shared_diagram(
     access_token = authorization.split(" ", 1)[1]
     verify_access_token(access_token)
 
-    res = supabase.table("shared_diagrams") \
+    db = get_supabase_client()
+
+    res = db.table("shared_diagrams") \
         .select("mermaid_code") \
         .eq("id", str(share_id)) \
-        .single() \
+        .limit(1) \
         .execute()
 
-    if not res.data:
+    rows = getattr(res, "data", None) or []
+    if not rows:
         raise HTTPException(status_code=404, detail="Shared diagram not found")
 
-    return res.data
+    return rows[0]
 
 
 @app.post("/webhook/lemon")
