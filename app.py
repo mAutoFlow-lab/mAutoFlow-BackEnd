@@ -106,13 +106,28 @@ async def create_share(
 @app.get("/api/share/{share_id}")
 async def get_shared_diagram(
     share_id: UUID,
-    authorization: str = Header(None)
+    authorization: str | None = Header(None)
 ):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing token")
+    # ✅ 비로그인도 열람 가능하게:
+    # 토큰이 있으면 검증만 하고, 없어도 조회는 허용
+    if authorization and authorization.startswith("Bearer "):
+        access_token = authorization.split(" ", 1)[1]
+        verify_access_token(access_token)
 
-    access_token = authorization.split(" ", 1)[1]
-    verify_access_token(access_token)
+    db = get_supabase_client()
+
+    res = db.table("shared_diagrams") \
+        .select("mermaid_code") \
+        .eq("id", str(share_id)) \
+        .limit(1) \
+        .execute()
+
+    rows = getattr(res, "data", None) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Shared diagram not found")
+
+    return rows[0]
+
 
     db = get_supabase_client()
 
