@@ -87,6 +87,27 @@ async def create_share(
     # ✅ (수정 2) 전역 supabase 대신 안전한 getter 사용
     db = get_supabase_client()
 
+    # ✅ SHARE 생성 남용 방지: 유저당 하루 N개 제한
+    daily_limit = int(os.getenv("SHARE_DAILY_LIMIT", "20"))
+
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+
+    existing = (
+        db.table("shared_diagrams")
+          .select("id")
+          .eq("owner_user_id", user_id)
+          .gte("created_at", day_start.isoformat())
+          .lt("created_at", day_end.isoformat())
+          .execute()
+    )
+
+    existing_rows = getattr(existing, "data", None) or []
+    if len(existing_rows) >= daily_limit:
+        raise HTTPException(status_code=429, detail=f"Daily share limit reached ({daily_limit})")
+    
+
     # ✅ (수정 3) id 직접 생성해서 넣기 (테이블 default 없어도 안전)
     share_id = str(uuid4())
 
