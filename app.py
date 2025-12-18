@@ -126,6 +126,54 @@ async def get_shared_diagram(share_id: UUID):
 
     return rows[0]
 
+@app.delete("/api/share/{share_id}")
+async def delete_shared_diagram(
+    share_id: UUID,
+    access_token: str = Form(...),
+):
+    """
+    공유 다이어그램 삭제(soft delete). 생성자(owner)만 가능.
+    """
+    token_info = verify_access_token(access_token)
+    user_id = token_info.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: no user_id")
+
+    db = get_supabase_client()
+    now_utc = datetime.now(timezone.utc).isoformat()
+
+    # 대상 조회 (삭제/만료/없음은 404)
+    res = (
+        db.table("shared_diagrams")
+          .select("owner_user_id")
+          .eq("id", str(share_id))
+          .is_("deleted_at", "null")
+          .gt("expires_at", now_utc)
+          .limit(1)
+          .execute()
+    )
+
+    rows = getattr(res, "data", None) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Expired or removed")
+
+    owner_id = rows[0].get("owner_user_id")
+    if owner_id != user_id:
+        raise HTTPException(status_code=403, detail="Not owner")
+
+    upd = (
+        db.table("shared_diagrams")
+          .update({"deleted_at": now_utc})
+          .eq("id", str(share_id))
+          .execute()
+    )
+
+    if not getattr(upd, "data", None):
+        raise HTTPException(status_code=500, detail="Failed to delete share")
+
+    return {"ok": True}
+
+
 
 @app.post("/webhook/lemon")
 async def lemon_webhook(request: Request):
