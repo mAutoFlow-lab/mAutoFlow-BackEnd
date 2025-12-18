@@ -8,7 +8,7 @@ from pathlib import Path
 import json
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
 
 import os
@@ -104,42 +104,25 @@ async def create_share(
 
 
 @app.get("/api/share/{share_id}")
-async def get_shared_diagram(
-    share_id: UUID,
-    authorization: str | None = Header(None)
-):
-    # ✅ 비로그인도 열람 가능하게:
-    # 토큰이 있으면 검증만 하고, 없어도 조회는 허용
-    if authorization and authorization.startswith("Bearer "):
-        access_token = authorization.split(" ", 1)[1]
-        verify_access_token(access_token)
-
+async def get_shared_diagram(share_id: UUID):
     db = get_supabase_client()
 
-    res = db.table("shared_diagrams") \
-        .select("mermaid_code") \
-        .eq("id", str(share_id)) \
-        .limit(1) \
-        .execute()
+    now_utc = datetime.now(timezone.utc).isoformat()
+
+    res = (
+        db.table("shared_diagrams")
+          .select("mermaid_code, created_at, expires_at")
+          .eq("id", str(share_id))
+          .is_("deleted_at", "null")
+          .gt("expires_at", now_utc)
+          .limit(1)
+          .execute()
+    )
 
     rows = getattr(res, "data", None) or []
     if not rows:
-        raise HTTPException(status_code=404, detail="Shared diagram not found")
-
-    return rows[0]
-
-
-    db = get_supabase_client()
-
-    res = db.table("shared_diagrams") \
-        .select("mermaid_code") \
-        .eq("id", str(share_id)) \
-        .limit(1) \
-        .execute()
-
-    rows = getattr(res, "data", None) or []
-    if not rows:
-        raise HTTPException(status_code=404, detail="Shared diagram not found")
+        # 없음 / 만료 / 삭제 → 모두 404
+        raise HTTPException(status_code=404, detail="Expired or removed")
 
     return rows[0]
 
