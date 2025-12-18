@@ -203,9 +203,15 @@ async def purge_shared_diagrams(x_admin_key: str = Header(None)):
     - deleted_at < now - 7d  -> purge
     호출은 외부 스케줄러가 하루 1번 정도로 수행.
     """
-    admin_key = os.getenv("ADMIN_PURGE_KEY")
-    if not admin_key or x_admin_key != admin_key:
+    admin_key = (os.getenv("ADMIN_PURGE_KEY") or "").strip()
+    got_key = (x_admin_key or "").strip()
+
+    print(f"[purge_shared] has_admin_key={bool(admin_key)} got_header={bool(got_key)} "
+          f"env_len={len(admin_key)} hdr_len={len(got_key)}")
+
+    if (not admin_key) or (got_key != admin_key):
         raise HTTPException(status_code=401, detail="Unauthorized")
+
 
     db = get_supabase_client()
     cutoff = datetime.now(timezone.utc) - timedelta(days=7)
