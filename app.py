@@ -18,6 +18,8 @@ import datetime as dt
 import re
 import requests
 import traceback
+import time
+import logging
 from supabase import create_client, Client
 from jose import jwt, JWTError
 from typing import Optional
@@ -46,6 +48,77 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============================
+# Request Logging Middleware
+# ============================
+LOG_LEVEL = (os.getenv("LOG_LEVEL") or "INFO").upper()
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
+logger = logging.getLogger("mautoflow")
+
+# (선택) 로그에서 너무 긴 값은 잘라내기
+def _clip(v: str | None, n: int = 120) -> str | None:
+    if v is None:
+        return None
+    v = str(v)
+    return v if len(v) <= n else (v[:n] + "...")
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    """
+    운영용 최소 로깅:
+      - method, path, status, latency(ms)
+      - client ip
+      - share_id(경로에 있으면)
+      - admin purge 호출 여부(헤더 존재 여부 정도)
+    body는 읽지 않음(성능/보안/stream 소비 이슈 방지).
+    """
+    start = time.perf_counter()
+
+    method = request.method
+    path = request.url.path
+
+    # path에서 share_id 추출 (/api/share/<uuid>)
+    share_id = None
+    m = re.match(r"^/api/share/([0-9a-fA-F-]{36})$", path)
+    if m:
+        share_id = m.group(1)
+
+    # 클라이언트 IP
+    client_ip = None
+    try:
+        # 프록시를 쓴다면 X-Forwarded-For가 더 정확할 때가 많음
+        xff = request.headers.get("x-forwarded-for")
+        client_ip = (xff.split(",")[0].strip() if xff else None) or (request.client.host if request.client else None)
+    except Exception:
+        client_ip = None
+
+    # purge는 관리자 헤더 사용하므로 “있었는지” 정도만 로깅
+    has_admin_header = bool(request.headers.get("x-admin-key")) if path == "/api/admin/purge_shared" else None
+
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    except Exception as e:
+        # FastAPI 기본 예외 처리도 동작하지만,
+        # 여기서도 최소한 “500 발생”을 로깅해두면 Render 로그에서 추적이 쉬움.
+        status = 500
+        logger.exception(
+            "[ERR] %s %s status=%s ip=%s share_id=%s admin_hdr=%s err=%s",
+            method, path, status, _clip(client_ip), _clip(share_id), has_admin_header, _clip(repr(e)),
+        )
+        raise
+    finally:
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+
+        # 정상/비정상 공통 로그
+        # (logger.exception은 위 except에서 이미 찍히므로, 여기선 info만)
+        logger.info(
+            "[REQ] %s %s status=%s %dms ip=%s share_id=%s admin_hdr=%s",
+            method, path, status, elapsed_ms, _clip(client_ip), _clip(share_id), has_admin_header
+        )
 
 
 # --- Supabase client 설정 ---
