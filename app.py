@@ -195,6 +195,45 @@ async def delete_shared_diagram(
     return {"ok": True}
 
 
+@app.post("/api/admin/purge_shared")
+async def purge_shared_diagrams(x_admin_key: str = Header(None)):
+    """
+    만료/삭제된 shared_diagrams 물리 삭제(purge)
+    - expires_at < now - 7d  -> purge
+    - deleted_at < now - 7d  -> purge
+    호출은 외부 스케줄러가 하루 1번 정도로 수행.
+    """
+    admin_key = os.getenv("ADMIN_PURGE_KEY")
+    if not admin_key or x_admin_key != admin_key:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    db = get_supabase_client()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=7)
+    cutoff_iso = cutoff.isoformat()
+
+    # 1) 만료된 것 purge (expires_at 기준)
+    r1 = db.table("shared_diagrams").delete().lt("expires_at", cutoff_iso).execute()
+    deleted_expired = len(getattr(r1, "data", None) or [])
+
+    # 2) 삭제된 것 중 오래된 것 purge (deleted_at 기준)
+    # supabase-py에서 "deleted_at is not null" 표현을 안전하게 하려고
+    # 1900년 이후 값인 것만 대상으로 처리 (deleted_at이 null이면 조건 탈락)
+    r2 = (
+        db.table("shared_diagrams")
+          .delete()
+          .gte("deleted_at", "1900-01-01T00:00:00+00:00")
+          .lt("deleted_at", cutoff_iso)
+          .execute()
+    )
+    deleted_soft = len(getattr(r2, "data", None) or [])
+
+    return {
+        "ok": True,
+        "cutoff": cutoff_iso,
+        "deleted_expired": deleted_expired,
+        "deleted_soft": deleted_soft,
+    }
+
 
 @app.post("/webhook/lemon")
 async def lemon_webhook(request: Request):
