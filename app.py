@@ -1019,8 +1019,17 @@ def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
     if out_format == "pdf":
         cmd.append("--pdfFit")
 
+    env = os.environ.copy()
+    env["PUPPETEER_CACHE_DIR"] = "/opt/render/project/.cache/puppeteer"
+
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        subprocess.run(
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            env=env
+        )
     except subprocess.CalledProcessError as e:
         # 로그에서 바로 원인 보이게 stdout/stderr는 이미 포함하는 형태 유지 :contentReference[oaicite:9]{index=9}
         raise RuntimeError(f"mmdc failed:\ncmd={cmd}\nstdout={e.stdout}\nstderr={e.stderr}")
