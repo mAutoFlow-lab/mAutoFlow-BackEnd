@@ -1021,6 +1021,8 @@ def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
 
     env = os.environ.copy()
     env["PUPPETEER_CACHE_DIR"] = "/opt/render/project/.cache/puppeteer"
+    env["XDG_CACHE_HOME"] = "/opt/render/project/.cache"  # puppeteer가 이걸 타는 경우도 있어서 같이 고정
+
 
     try:
         subprocess.run(
