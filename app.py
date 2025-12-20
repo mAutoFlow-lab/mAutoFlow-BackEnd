@@ -1048,19 +1048,38 @@ def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
         cmd.append("--pdfFit")
 
     env = os.environ.copy()
-    env["PUPPETEER_CACHE_DIR"] = os.getenv("PUPPETEER_CACHE_DIR", "/opt/render/project/src")
+    env["PUPPETEER_CACHE_DIR"] = os.getenv("PUPPETEER_CACHE_DIR", "/opt/render/project/.cache/puppeteer")
     env["XDG_CACHE_HOME"] = "/opt/render/project/.cache"
 
+    # chrome_path를 찾았으면 env에도 확실히 박아주기 (mermaid-cli/puppeteer가 env를 더 잘 타는 경우가 있음)
+    if chrome_path:
+        env["PUPPETEER_EXECUTABLE_PATH"] = chrome_path
+
     try:
-        subprocess.run(
+        t_cmd0 = time.time()
+
+        p = subprocess.run(
             cmd,
             check=True,
             capture_output=True,
             text=True,
             env=env
         )
+
+        t_cmd1 = time.time()
+        logger.info(
+            f"[MMDC] run_ms={(t_cmd1 - t_cmd0)*1000:.0f} "
+            f"stdout_len={len(p.stdout or '')} stderr_len={len(p.stderr or '')} "
+            f"out={out_path}"
+        )
+
     except subprocess.CalledProcessError as e:
-        # 로그에서 바로 원인 보이게 stdout/stderr는 이미 포함하는 형태 유지 :contentReference[oaicite:9]{index=9}
+        t_cmd1 = time.time()
+        logger.error(
+            f"[MMDC] failed_run_ms={(t_cmd1 - t_cmd0)*1000:.0f} "
+            f"returncode={e.returncode} cmd={cmd}"
+        )
+        # 로그에서 바로 원인 보이게 stdout/stderr는 이미 포함
         raise RuntimeError(f"mmdc failed:\ncmd={cmd}\nstdout={e.stdout}\nstderr={e.stderr}")
 
     if not out_path.exists():
@@ -1391,7 +1410,18 @@ async def export_diagram(
         filename = _download_filename(func_name, out_format)
         media_type = "image/png" if out_format == "png" else "application/pdf"
 
-        return FileResponse(out_path, media_type=media_type, filename=filename)
+        t2 = time.time()
+        data = Path(out_path).read_bytes()
+        t3 = time.time()
+        logger.info(f"[EXPORT] read_ms={(t3 - t2)*1000:.0f} size={len(data)} bytes")
+
+        return Response(
+            content=data,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
     
     except HTTPException:
         raise
