@@ -28,6 +28,9 @@ from uuid import UUID
 from uuid import uuid4  # ✅ 파일 상단 import 구역에 추가 (UUID 이미 있으니 같이 둬도 됨)
 
 from c_autodiag import extract_function_body, StructuredFlowEmitter, extract_function_names
+from starlette.responses import FileResponse
+from starlette.background import BackgroundTask
+
 
 app = FastAPI()
 
@@ -49,6 +52,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ---- add near top-level (global) ----
+_CHROME_PATH_CACHE: str | None = None
 
 # ============================
 # Request Logging Middleware
@@ -1004,22 +1009,37 @@ def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
 
     # ✅ puppeteer no-sandbox 설정 (Render/컨테이너 환경 필수 케이스 많음)
     pup_cfg_path = workdir / "puppeteer-config.json"
+    
     # puppeteer config (Render에서 Chrome 경로 못찾는 문제 대응)
-    chrome_path = os.getenv("PUPPETEER_EXECUTABLE_PATH") or os.getenv("CHROME_PATH")
+    global _CHROME_PATH_CACHE
+
+    chrome_path = (
+        os.getenv("PUPPETEER_EXECUTABLE_PATH")
+        or os.getenv("CHROME_PATH")
+        or _CHROME_PATH_CACHE
+    )
 
     if not chrome_path:
-        # build 로그에서 실제 설치가 /opt/render/project/src/chrome-headless-shell/... 로 되는 케이스가 있어서 둘 다 탐색
+        # build log에서 설치 위치가 "/opt/render/project/src/chrome-headless-shell/..." 로 찍혔으니
+        # 우선순위를 src 쪽으로 두고 1번만 탐색해서 캐싱
         search_bases = [
-            Path("/opt/render/project/.cache/puppeteer"),
             Path("/opt/render/project/src"),
+            Path("/opt/render/project/.cache/puppeteer"),
         ]
+
+        found = None
         for base in search_bases:
-            if base.exists():
-                for p in base.glob("chrome-headless-shell/**/chrome-headless-shell"):
-                    chrome_path = str(p)
-                    break
-            if chrome_path:
+            if not base.exists():
+                continue
+            # ✅ glob도 후보를 좁혀서 비용 줄이기 (가능한 한 패턴 구체화)
+            candidates = list(base.glob("chrome-headless-shell/linux-*/chrome-headless-shell-linux64/chrome-headless-shell"))
+            if candidates:
+                found = str(candidates[0])
                 break
+
+        chrome_path = found
+        _CHROME_PATH_CACHE = chrome_path
+
 
     pup_cfg = {
         "args": [
@@ -1048,8 +1068,18 @@ def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
         cmd.append("--pdfFit")
 
     env = os.environ.copy()
-    env["PUPPETEER_CACHE_DIR"] = os.getenv("PUPPETEER_CACHE_DIR", "/opt/render/project/.cache/puppeteer")
-    env["XDG_CACHE_HOME"] = "/opt/render/project/.cache"
+
+    # ✅ build log 기준 설치 위치와 동일하게 맞춘다
+    env["PUPPETEER_CACHE_DIR"] = "/opt/render/project/src"
+
+    # ✅ executablePath를 쓰더라도 env로도 박아두면 puppeteer가 덜 헤맨다
+    if chrome_path:
+        env["PUPPETEER_EXECUTABLE_PATH"] = chrome_path
+        env["CHROME_PATH"] = chrome_path
+
+    # ❌ XDG_CACHE_HOME 강제는 제거 (헷갈리게 만드는 경우가 많음)
+    # env["XDG_CACHE_HOME"] = "/opt/render/project/.cache"
+
 
     # chrome_path를 찾았으면 env에도 확실히 박아주기 (mermaid-cli/puppeteer가 env를 더 잘 타는 경우가 있음)
     if chrome_path:
@@ -1085,7 +1115,15 @@ def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
     if not out_path.exists():
         raise RuntimeError("Render output not created.")
 
-    return str(out_path)
+    return str(out_path), str(workdir)
+
+
+def _cleanup_tmpdir(tmpdir: str) -> None:
+    try:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    except Exception:
+        # cleanup 실패는 서비스 실패로 만들 필요 없음
+        pass
 
 
 def _download_filename(func_name: str | None, ext: str) -> str:
@@ -1397,7 +1435,7 @@ async def export_diagram(
 
         # ✅ 여기서 렌더링은 1번만
         t0 = time.time()
-        out_path = _render_mermaid_to_file(mermaid, out_format)
+        out_path, tmpdir = _render_mermaid_to_file(mermaid, out_format)
         t1 = time.time()
         logger.info(f"[EXPORT] render_time_ms={(t1 - t0)*1000:.0f} out={out_path}")
 
@@ -1410,17 +1448,11 @@ async def export_diagram(
         filename = _download_filename(func_name, out_format)
         media_type = "image/png" if out_format == "png" else "application/pdf"
 
-        t2 = time.time()
-        data = Path(out_path).read_bytes()
-        t3 = time.time()
-        logger.info(f"[EXPORT] read_ms={(t3 - t2)*1000:.0f} size={len(data)} bytes")
-
-        return Response(
-            content=data,
+        return FileResponse(
+            path=out_path,
             media_type=media_type,
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"'
-            }
+            filename=filename,
+            background=BackgroundTask(_cleanup_tmpdir, tmpdir),
         )
     
     except HTTPException:
