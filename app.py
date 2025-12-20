@@ -1377,7 +1377,17 @@ async def export_diagram(
             )
 
         # ✅ 여기서 렌더링은 1번만
+        t0 = time.time()
         out_path = _render_mermaid_to_file(mermaid, out_format)
+        t1 = time.time()
+        logger.info(f"[EXPORT] render_time_ms={(t1 - t0)*1000:.0f} out={out_path}")
+
+        # 파일 읽기/응답 생성도 측정
+        t2 = time.time()
+        # (여기서 out_path read 하는 코드)
+        t3 = time.time()
+        logger.info(f"[EXPORT] read_and_response_ms={(t3 - t2)*1000:.0f}")
+        
         filename = _download_filename(func_name, out_format)
         media_type = "image/png" if out_format == "png" else "application/pdf"
 
