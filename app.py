@@ -1020,12 +1020,8 @@ def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
         cmd.append("--pdfFit")
 
     env = os.environ.copy()
-
-    # ✅ Render 런타임에서 puppeteer 기본 캐시가 /opt/render/.cache 로 잡히는 케이스가 많아서
-    #    빌드/런타임 모두 이 경로로 통일
-    env["PUPPETEER_CACHE_DIR"] = "/opt/render/.cache/puppeteer"
-    env["XDG_CACHE_HOME"] = "/opt/render/.cache"
-    env["HOME"] = "/opt/render"   # (선택) 일부 환경에서 캐시 기준이 HOME 따라가서 같이 고정
+    env["PUPPETEER_CACHE_DIR"] = "/opt/render/project/.cache/puppeteer"
+    env["XDG_CACHE_HOME"] = "/opt/render/project/.cache"
 
     try:
         subprocess.run(
