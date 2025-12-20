@@ -962,37 +962,68 @@ _MERMAID_CLI_CONFIG = {
 
 import shutil
 
+def _find_mmdc_path() -> str | None:
+    """
+    Render(네이티브)에서 npm -g 로 설치한 바이너리가 PATH에 안 잡히는 경우가 있어
+    흔한 후보 경로까지 포함해서 탐색.
+    """
+    # 1) 기본 PATH
+    p = shutil.which("mmdc")
+    if p:
+        return p
+
+    # 2) Render/Node 글로벌 설치가 자주 떨어지는 후보들
+    extra_bins = [
+        "/opt/render/project/.npm-global/bin",
+        "/opt/render/.npm-global/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+    ]
+    joined = os.environ.get("PATH", "")
+    joined = joined + ":" + ":".join(extra_bins)
+    return shutil.which("mmdc", path=joined)
+
+
 def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
     out_format = (out_format or "").lower()
     if out_format not in ("png", "pdf"):
-        raise ValueError("Invalid format. Use png or pdf.")
+        raise ValueError("Invalid format. Use png or pdf.")  # 기존 로직 유지 :contentReference[oaicite:6]{index=6}
 
-    # ✅ mmdc 존재 여부 먼저 체크 (여기서 거의 잡힘)
-    if shutil.which("mmdc") is None:
+    mmdc_path = _find_mmdc_path()
+    if not mmdc_path:
+        # 기존의 'mmdc not found'를 조금 더 디버깅 가능하게
         raise RuntimeError(
-            "mmdc not found. Install @mermaid-js/mermaid-cli and ensure it's in PATH."
+            "mmdc not found in PATH. "
+            f"PATH={os.environ.get('PATH','')}"
         )
 
-    workdir = Path(tempfile.mkdtemp(prefix="mautoflow_"))
+    workdir = Path(tempfile.mkdtemp(prefix="mautoflow_"))  # 기존 로직 유지 :contentReference[oaicite:7]{index=7}
     mmd_path = workdir / "diagram.mmd"
     out_path = workdir / f"diagram.{out_format}"
     cfg_path = workdir / "mmdc-config.json"
 
-    mmd_path.write_text(mermaid_text, encoding="utf-8")
-    cfg_path.write_text(json.dumps(_MERMAID_CLI_CONFIG), encoding="utf-8")
+    # ✅ puppeteer no-sandbox 설정 (Render/컨테이너 환경 필수 케이스 많음)
+    pup_cfg_path = workdir / "puppeteer-config.json"
+    pup_cfg_path.write_text(
+        json.dumps({
+            "args": ["--no-sandbox", "--disable-setuid-sandbox"]
+        }),
+        encoding="utf-8"
+    )
 
-    cmd = ["mmdc", "-i", str(mmd_path), "-o", str(out_path), "-c", str(cfg_path)]
+    mmd_path.write_text(mermaid_text, encoding="utf-8")
+    cfg_path.write_text(json.dumps(_MERMAID_CLI_CONFIG), encoding="utf-8")  # htmlLabels False 유지 :contentReference[oaicite:8]{index=8}
+
+    # ✅ 핵심: "mmdc" 대신 "mmdc_path" 사용 + -p(puppeteer config) 추가
+    cmd = [mmdc_path, "-i", str(mmd_path), "-o", str(out_path), "-c", str(cfg_path), "-p", str(pup_cfg_path)]
     if out_format == "pdf":
         cmd.append("--pdfFit")
 
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
-    except FileNotFoundError as e:
-        # ✅ 여기로 오면 “진짜로 mmdc가 없음”
-        raise RuntimeError(f"mmdc execute failed (not found): {e}")
     except subprocess.CalledProcessError as e:
-        # ✅ 여기로 오면 “mmdc는 있는데 실행 중 실패”
-        raise RuntimeError(f"mmdc failed:\nstdout={e.stdout}\nstderr={e.stderr}")
+        # 로그에서 바로 원인 보이게 stdout/stderr는 이미 포함하는 형태 유지 :contentReference[oaicite:9]{index=9}
+        raise RuntimeError(f"mmdc failed:\ncmd={cmd}\nstdout={e.stdout}\nstderr={e.stderr}")
 
     if not out_path.exists():
         raise RuntimeError("Render output not created.")
