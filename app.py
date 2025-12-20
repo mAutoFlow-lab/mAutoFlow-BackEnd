@@ -1004,12 +1004,40 @@ def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
 
     # ✅ puppeteer no-sandbox 설정 (Render/컨테이너 환경 필수 케이스 많음)
     pup_cfg_path = workdir / "puppeteer-config.json"
-    pup_cfg_path.write_text(
-        json.dumps({
-            "args": ["--no-sandbox", "--disable-setuid-sandbox"]
-        }),
-        encoding="utf-8"
-    )
+    # puppeteer config (Render에서 Chrome 경로 못찾는 문제 대응)
+    chrome_path = os.getenv("PUPPETEER_EXECUTABLE_PATH") or os.getenv("CHROME_PATH")
+
+    if not chrome_path:
+        # build 로그에서 실제 설치가 /opt/render/project/src/chrome-headless-shell/... 로 되는 케이스가 있어서 둘 다 탐색
+        search_bases = [
+            Path("/opt/render/project/.cache/puppeteer"),
+            Path("/opt/render/project/src"),
+        ]
+        for base in search_bases:
+            if base.exists():
+                for p in base.glob("chrome-headless-shell/**/chrome-headless-shell"):
+                    chrome_path = str(p)
+                    break
+            if chrome_path:
+                break
+
+    pup_cfg = {
+        "args": [
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+        ]
+    }
+
+    # 핵심: executablePath를 박아주면 puppeteer가 캐시 경로를 안 뒤지고 바로 실행 가능
+    if chrome_path:
+        pup_cfg["executablePath"] = chrome_path
+        # 혹시 몰라 환경변수로도 주입
+        os.environ["PUPPETEER_EXECUTABLE_PATH"] = chrome_path
+
+    pup_cfg_path.write_text(json.dumps(pup_cfg), encoding="utf-8")
+
 
     mmd_path.write_text(mermaid_text, encoding="utf-8")
     cfg_path.write_text(json.dumps(_MERMAID_CLI_CONFIG), encoding="utf-8")  # htmlLabels False 유지 :contentReference[oaicite:8]{index=8}
@@ -1020,7 +1048,7 @@ def _render_mermaid_to_file(mermaid_text: str, out_format: str) -> str:
         cmd.append("--pdfFit")
 
     env = os.environ.copy()
-    env["PUPPETEER_CACHE_DIR"] = "/opt/render/project/.cache/puppeteer"
+    env["PUPPETEER_CACHE_DIR"] = os.getenv("PUPPETEER_CACHE_DIR", "/opt/render/project/src")
     env["XDG_CACHE_HOME"] = "/opt/render/project/.cache"
 
     try:
