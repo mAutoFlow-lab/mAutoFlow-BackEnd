@@ -769,7 +769,11 @@ class StructuredFlowEmitter:
         if len(s) > max_len:
             s = s[:max_len - 3] + "..."
 
-        # ← 여기 추가: Mermaid 라벨용 안전 문자 변환
+        # NOTE:
+        # 브라우저 Mermaid 렌더(htmlLabels:false)에서는 HTML entity escape를 하면
+        # &amp;, &lt;, &gt; 가 그대로 라벨에 찍히는 문제가 발생함.
+        # 따라서 여기서는 HTML escape를 절대 하지 않는다.
+        # (mmdc용 파일 생성이 필요하면 별도 옵션/모드에서만 escape/unescape 처리)
         # s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
@@ -788,15 +792,13 @@ class StructuredFlowEmitter:
         # 공백 정리 (연속 공백 → 한 칸)
         s = " ".join(s.split())
 
-        # &&, || 를 다음 줄로 내려서 세로로 쌓이게 (Mermaid는 <br/> 지원)
-        s = s.replace("&&", "<br/>&&").replace("||", "<br/>||")
+        # &&, || 를 다음 줄로 내려서 세로로 쌓이게
+        # NOTE: htmlLabels:false(Office 복붙 안정) 환경에서는 <br/> 같은 HTML 태그를 쓰지 말고
+        #       텍스트 개행으로 처리해야 라벨이 깨지지 않는다.
+        s = s.replace("&&", "\n&&").replace("||", "\n||")
 
-        # 조건문은 길어도 어느 정도는 다 보여주기
-        # max_len = 400  # 필요한 경우 300~500 사이에서 조절 가능
-        # if len(s) > max_len:
-        #     s = s[:max_len - 3] + "..."
-
-        # ← 여기 추가
+        # NOTE: 브라우저 Mermaid 렌더(htmlLabels:false)에서는 HTML entity escape 금지.
+        #       (&amp; / &lt; / &gt; 가 그대로 화면에 출력됨)
         # s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
         return s.replace('"', "'")
