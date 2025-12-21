@@ -762,44 +762,29 @@ class StructuredFlowEmitter:
 
     def _clean_label(self, line: str) -> str:
         s = line.strip()
-        # 마지막에 붙어 있는 '}' 또는 '{' 제거
         s = s.rstrip().rstrip('{}').rstrip()
+
+        # ✅ (추가) 혹시 이미 &lt; &gt; &amp; 로 들어온 경우를 원복
+        s = html.unescape(s)
 
         max_len = 220
         if len(s) > max_len:
             s = s[:max_len - 3] + "..."
 
-        # NOTE:
-        # 브라우저 Mermaid 렌더(htmlLabels:false)에서는 HTML entity escape를 하면
-        # &amp;, &lt;, &gt; 가 그대로 라벨에 찍히는 문제가 발생함.
-        # 따라서 여기서는 HTML escape를 절대 하지 않는다.
-        # (mmdc용 파일 생성이 필요하면 별도 옵션/모드에서만 escape/unescape 처리)
-        # s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
-        # Mermaid 라벨에서 " 는 문제가 되므로 ' 로 치환
         return s.replace('"', "'")
 
+
     def _clean_cond_label(self, line: str) -> str:
-        """
-        조건문(마름모) 전용 라벨 정리:
-        - &&, || 앞에서 줄바꿈을 넣어 가로 길이를 줄임
-        - 글자수는 넉넉하게 두고, 너무 심하게 길 때만 잘라냄
-        """
         s = line.strip()
         s = s.rstrip().rstrip('{}').rstrip()
+
+        # ✅ (추가) 이미 entity로 들어온 값이면 먼저 원복
+        s = html.unescape(s)
 
         # 공백 정리 (연속 공백 → 한 칸)
         s = " ".join(s.split())
 
-        # &&, || 를 다음 줄로 내려서 세로로 쌓이게
-        # NOTE: htmlLabels:false(Office 복붙 안정) 환경에서는 <br/> 같은 HTML 태그를 쓰지 말고
-        #       텍스트 개행으로 처리해야 라벨이 깨지지 않는다.
         s = s.replace("&&", "\n&&").replace("||", "\n||")
-
-        # NOTE: 브라우저 Mermaid 렌더(htmlLabels:false)에서는 HTML entity escape 금지.
-        #       (&amp; / &lt; / &gt; 가 그대로 화면에 출력됨)
-        # s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
         return s.replace('"', "'")
 
