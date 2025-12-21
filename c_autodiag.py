@@ -763,8 +763,21 @@ class StructuredFlowEmitter:
 
     def _clean_label(self, line: str) -> str:
         s = line.strip()
-        s = html.unescape(s)  # ✅ &lt; &gt; &amp; 등을 < > & 로 복원
+        s = html.unescape(s)
         s = s.rstrip().rstrip('{}').rstrip()
+
+        # (선택) 라벨 표시 안전문자 치환
+        s = (s
+             .replace("<<", "＜＜")
+             .replace(">>", "＞＞")
+             .replace("<=", "≤")
+             .replace(">=", "≥")
+             .replace("!=", "≠")
+             .replace("<", "＜")
+             .replace(">", "＞")
+             .replace("&", "＆")
+             .replace("|", "｜")
+        )
 
         max_len = 220
         if len(s) > max_len:
@@ -773,17 +786,36 @@ class StructuredFlowEmitter:
         return s.replace('"', "'")
 
 
+
     def _clean_cond_label(self, line: str) -> str:
         s = line.strip()
-        s = html.unescape(s)  # ✅ &lt; &gt; &amp;&amp; 같은 것 복원
+        s = html.unescape(s)  # 혹시 들어온 엔티티는 먼저 복원
         s = s.rstrip().rstrip('{}').rstrip()
 
         # 공백 정리 (연속 공백 → 한 칸)
         s = " ".join(s.split())
 
-        s = s.replace("&&", "\n&&").replace("||", "\n||")
+        # ✅ Mermaid가 SVG 텍스트로 렌더링할 때 < > & | 등을 엔티티 문자열로 바꿔버리는 케이스가 있음.
+        # 그래서 "표시용 라벨"에서만 안전 문자로 치환해서 그대로 보이게 만든다.
+        # (코드 로직에는 영향 없음: 출력 라벨만 바뀜)
+        s = (s
+             .replace("<<", "＜＜")
+             .replace(">>", "＞＞")
+             .replace("<=", "≤")
+             .replace(">=", "≥")
+             .replace("!=", "≠")
+             .replace("<", "＜")
+             .replace(">", "＞")
+        )
+
+        # & / | 는 먼저 단일 문자를 안전 문자로 바꾼 뒤, 논리연산자 줄바꿈 처리
+        s = s.replace("&", "＆").replace("|", "｜")
+
+        # 줄바꿈 가독성 (논리 연산자)
+        s = s.replace("＆＆", "\n＆＆").replace("｜｜", "\n｜｜")
 
         return s.replace('"', "'")
+
 
     def _make_cond_node(self, node_id: str, label: str) -> str:
         """
