@@ -770,7 +770,7 @@ class StructuredFlowEmitter:
             s = s[:max_len - 3] + "..."
 
         # ← 여기 추가: Mermaid 라벨용 안전 문자 변환
-        s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        # s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
         # Mermaid 라벨에서 " 는 문제가 되므로 ' 로 치환
@@ -797,7 +797,7 @@ class StructuredFlowEmitter:
         #     s = s[:max_len - 3] + "..."
 
         # ← 여기 추가
-        s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        # s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
         return s.replace('"', "'")
 
