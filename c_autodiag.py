@@ -22,6 +22,7 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
+import html   # ✅ HTML entity (&lt; &gt; &amp; ...) 복원용
 
 # ---------------------------------------------------------------------------
 # libclang (callgraph 에서만 사용, 필요할 때만 로드)
@@ -762,10 +763,8 @@ class StructuredFlowEmitter:
 
     def _clean_label(self, line: str) -> str:
         s = line.strip()
+        s = html.unescape(s)  # ✅ &lt; &gt; &amp; 등을 < > & 로 복원
         s = s.rstrip().rstrip('{}').rstrip()
-
-        # ✅ (추가) 혹시 이미 &lt; &gt; &amp; 로 들어온 경우를 원복
-        s = html.unescape(s)
 
         max_len = 220
         if len(s) > max_len:
@@ -776,10 +775,8 @@ class StructuredFlowEmitter:
 
     def _clean_cond_label(self, line: str) -> str:
         s = line.strip()
+        s = html.unescape(s)  # ✅ &lt; &gt; &amp;&amp; 같은 것 복원
         s = s.rstrip().rstrip('{}').rstrip()
-
-        # ✅ (추가) 이미 entity로 들어온 값이면 먼저 원복
-        s = html.unescape(s)
 
         # 공백 정리 (연속 공백 → 한 칸)
         s = " ".join(s.split())
