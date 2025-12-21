@@ -1413,23 +1413,74 @@ class StructuredFlowEmitter:
 
     # ---- while / for 루프 처리 ----
     def _handle_loop(self, lines, idx, end_idx, prev_node, edge_label, kind="while", entry_holder=None):
-        loop_line = lines[idx]
+        # ✅ for/while 헤더가 여러 줄로 끊긴 경우(if처럼) ')' 닫힐 때까지 합친다
+        header_lines = []
+        paren_balance = 0
+        j = idx
+        saw_paren = False
+
+        while j < end_idx:
+            line = lines[j]
+            header_lines.append(line)
+            if "(" in line:
+                saw_paren = True
+            paren_balance += line.count("(") - line.count(")")
+            # 괄호를 한 번이라도 봤고, balance가 0이 되면 헤더 종료
+            if saw_paren and paren_balance <= 0:
+                break
+            # 단일라인 헤더(괄호가 없는 for(;;) 같은 케이스)는 여기서 끝내지 않음
+            j += 1
+
+        header_end = j if j < end_idx else idx
+        loop_line = " ".join([x.strip() for x in header_lines])  # ✅ 헤더 통합본
         loop_label_full = self._clean_label(loop_line)
 
         # ---------- for 문 처리 ----------
         if kind == "for":
             # 헤더 파싱: for (init; cond; post)
-            m = re.search(r"for\s*\((.*)\)", loop_line)
+            m = re.search(r"\bfor\s*\(", loop_line)
             init = cond = post = ""
             if m:
-                inside = m.group(1)
-                parts = inside.split(";")
+                # ✅ for( ... ) 괄호 내용만 depth로 정확히 추출
+                k = m.end()
+                depth = 1
+                buf = []
+                while k < len(loop_line) and depth > 0:
+                    ch = loop_line[k]
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    buf.append(ch)
+                    k += 1
+                inside = "".join(buf)
+
+                # ✅ top-level ';'만 분리 (괄호 안 ';' 방지)
+                parts = []
+                cur = []
+                depth2 = 0
+                for ch in inside:
+                    if ch == "(":
+                        depth2 += 1
+                    elif ch == ")":
+                        depth2 = max(0, depth2 - 1)
+
+                    if ch == ";" and depth2 == 0:
+                        parts.append("".join(cur))
+                        cur = []
+                    else:
+                        cur.append(ch)
+                parts.append("".join(cur))
+
                 if len(parts) >= 1:
                     init = parts[0].strip()
                 if len(parts) >= 2:
                     cond = parts[1].strip()
                 if len(parts) >= 3:
-                    post = ";".join(parts[2:]).strip()
+                    post = parts[2].strip()
+
 
             # 먼저 본문 블록 위치부터 찾는다
             brace_idx = None
@@ -1597,9 +1648,26 @@ class StructuredFlowEmitter:
             # break 도 없으면 이론상 끝나지 않는 루프이므로 cond_id 반환
             return cond_id, after_idx
 
-        # ---------- while 문 처리 (기존과 동일) ----------
+        # ---------- while 문 처리 ----------
+        # ✅ if처럼 'while ( ... )' 까지만 추출 (멀티라인도 loop_line에 합쳐져 있음)
+        m = re.search(r"\bwhile\s*\(", loop_line)
+        cond_text = loop_line
+        if m:
+            k = m.end()
+            depth = 1
+            while k < len(loop_line) and depth > 0:
+                ch = loop_line[k]
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                k += 1
+            if depth == 0:
+                cond_text = loop_line[:k]  # 'while ( ... )' 까지만
+
         loop_id = self.nid()
-        loop_label = self._clean_cond_label(loop_label_full)
+        loop_label = self._clean_cond_label(cond_text)
+        
         self.add(self._make_cond_node(loop_id, loop_label))
         self._bind_node_line(loop_id, idx)
         self._register_entry(entry_holder, loop_id)
