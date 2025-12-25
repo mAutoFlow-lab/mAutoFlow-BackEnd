@@ -805,8 +805,11 @@ def check_daily_limit(user_id: str, code_hash: str) -> int:
     try:
         db = get_supabase_client()
     except Exception as e:
-        print("[USAGE] get_supabase_client() failed, fallback to memory:", e)
-        return _check_daily_limit_memory(user_id, code_hash)
+        print("[USAGE] get_supabase_client() failed:", e)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "USAGE_DB_UNAVAILABLE", "message": "usage DB unavailable"}
+        )
 
     # 2) 오늘 날짜 row 조회
     try:
@@ -820,13 +823,19 @@ def check_daily_limit(user_id: str, code_hash: str) -> int:
             },
         ).execute()
     except Exception as e:
-        print("[USAGE] rpc record_diagram_usage failed, fallback to memory:", e)
-        return _check_daily_limit_memory(user_id, code_hash)
+        print("[USAGE] rpc record_diagram_usage failed:", e)
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "USAGE_RPC_FAILED", "message": "usage RPC failed"}
+        )
 
     rows = getattr(rpc, "data", None) or []
     if not rows:
-        print("[USAGE] rpc returned empty, fallback to memory")
-        return _check_daily_limit_memory(user_id, code_hash)
+        print("[USAGE] rpc returned empty")
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "USAGE_RPC_EMPTY", "message": "usage RPC returned empty"}
+        )
 
     allowed = rows[0].get("allowed")
     new_count = rows[0].get("new_count") or 0
