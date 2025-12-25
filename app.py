@@ -810,76 +810,43 @@ def check_daily_limit(user_id: str, code_hash: str) -> int:
 
     # 2) 오늘 날짜 row 조회
     try:
-        resp = (
-            db.table("diagram_usage")
-              .select("count,last_code_hash,usage_date")
-              .eq("user_id", user_id)
-              .eq("usage_date", today.isoformat())
-              .limit(1)
-              .execute()
-        )
+        rpc = db.rpc(
+            "record_diagram_usage",
+            {
+                "p_user_id": user_id,
+                "p_usage_date": today.isoformat(),  # date로 캐스팅됨
+                "p_code_hash": code_hash,
+                "p_max_count": DAILY_FREE_LIMIT,
+            },
+        ).execute()
     except Exception as e:
-        print("[USAGE] select from diagram_usage failed, fallback to memory:", e)
+        print("[USAGE] rpc record_diagram_usage failed, fallback to memory:", e)
         return _check_daily_limit_memory(user_id, code_hash)
 
-    rows = getattr(resp, "data", None) or []
-    if rows:
-        row = rows[0]
-        count = row.get("count") or 0
-        last_hash = row.get("last_code_hash")
-        has_row = True
-    else:
-        count = 0
-        last_hash = None
-        has_row = False
+    rows = getattr(rpc, "data", None) or []
+    if not rows:
+        print("[USAGE] rpc returned empty, fallback to memory")
+        return _check_daily_limit_memory(user_id, code_hash)
 
-    is_new_code = (last_hash != code_hash)
+    allowed = rows[0].get("allowed")
+    new_count = rows[0].get("new_count") or 0
 
-    # 3) 새로운 코드 + 이미 한도 초과 ⇒ 429
-    if is_new_code and count >= DAILY_FREE_LIMIT:
+    if not allowed:
         print(
             f"[USAGE-DB] LIMIT_EXCEEDED user_id={user_id} "
-            f"date={today} count={count}"
+            f"date={today} count={new_count}"
         )
         raise HTTPException(
             status_code=429,
             detail={
                 "code": "DAILY_LIMIT_EXCEEDED",
-                "usage_count": count,
+                "usage_count": new_count,
                 "daily_free_limit": DAILY_FREE_LIMIT,
             },
         )
 
-    # 4) 같은 코드라면 DB 업데이트 없이 그대로 리턴
-    if not is_new_code:
-        print(
-            f"[USAGE-DB] OK (same code) user_id={user_id} "
-            f"date={today} count={count}"
-        )
-        return count
-
-    # 5) 새로운 코드인 경우: count + 1 후 insert/update
-    new_count = count + 1
-
-    try:
-        # ✅ 경합 방지: (user_id, usage_date) 기준 upsert
-        db.table("diagram_usage").upsert(
-            {
-                "user_id": user_id,
-                "usage_date": today.isoformat(),
-                "count": new_count,
-                "last_code_hash": code_hash,
-            },
-            on_conflict="user_id,usage_date",
-        ).execute()
-            
-    except Exception as e:
-        # 사용 자체는 성공시킨 뒤, 로그만 남김
-        print("[USAGE-DB] upsert failed, but allow usage:", e)
-
     print(
-        f"[USAGE-DB] OK (new code) user_id={user_id} "
-        f"date={today} count={new_count}"
+        f"[USAGE-DB] OK user_id={user_id} date={today} count={new_count}"
     )
     return new_count
 
