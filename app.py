@@ -571,7 +571,7 @@ EXPERT_NODE_LIMIT  = 1000     # Expert: 1000 nodes
 
 # user_id 별로 오늘 날짜, 사용 횟수, 마지막 코드 해시를 기억
 _usage_counter = defaultdict(
-    lambda: {"date": date.today(), "count": 0, "last_code_hash": None}
+    lambda: {"date": datetime.now(timezone.utc).date(), "count": 0, "last_code_hash": None}
 )
 
 def normalize_source(code: str) -> str:
@@ -584,9 +584,18 @@ def normalize_source(code: str) -> str:
     return "\n".join(lines)
 
 
-def make_code_hash(code: str) -> str:
+def make_code_hash(code: str, macros: dict | None = None) -> str:
+    """
+    usage 카운팅용 해시:
+    - 같은 소스라도 macro_defines가 다르면 결과가 달라질 수 있으니 해시에 포함
+    """
     norm = normalize_source(code)
-    return hashlib.sha256(norm.encode("utf-8")).hexdigest()
+    macro_part = ""
+    if macros:
+        # dict 순서에 영향 없게 key 정렬해서 고정 문자열로 만듦
+        macro_part = json.dumps(macros, sort_keys=True, ensure_ascii=False)
+    payload = norm + "\n/*__MACROS__*/\n" + macro_part
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 # C 정수 리터럴 (10진/16진/2진/8진) + 접미사(U/L/UL/ULL...) 처리
@@ -736,7 +745,7 @@ def _check_daily_limit_memory(user_id: str, code_hash: str) -> int:
     - 같은 코드(code_hash)가 들어오면 count 를 증가시키지 않는다.
     - 다른 코드가 들어왔고, 이미 DAILY_FREE_LIMIT 만큼 썼다면 429를 던진다.
     """
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
     info = _usage_counter[user_id]
 
     # 날짜가 바뀌면 카운터 리셋
@@ -790,7 +799,7 @@ def check_daily_limit(user_id: str, code_hash: str) -> int:
     - Supabase 클라이언트/쿼리 오류가 나면
       _check_daily_limit_memory() 로 안전하게 fallback 한다.
     """
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
 
     # 1) Supabase 클라이언트 확보
     try:
@@ -853,24 +862,17 @@ def check_daily_limit(user_id: str, code_hash: str) -> int:
     new_count = count + 1
 
     try:
-        if has_row:
-            # 기존 row 업데이트
-            db.table("diagram_usage").update(
-                {
-                    "count": new_count,
-                    "last_code_hash": code_hash,
-                }
-            ).eq("user_id", user_id).eq("usage_date", today.isoformat()).execute()
-        else:
-            # 신규 row 삽입
-            db.table("diagram_usage").insert(
-                {
-                    "user_id": user_id,
-                    "usage_date": today.isoformat(),
-                    "count": new_count,
-                    "last_code_hash": code_hash,
-                }
-            ).execute()
+        # ✅ 경합 방지: (user_id, usage_date) 기준 upsert
+        db.table("diagram_usage").upsert(
+            {
+                "user_id": user_id,
+                "usage_date": today.isoformat(),
+                "count": new_count,
+                "last_code_hash": code_hash,
+            },
+            on_conflict="user_id,usage_date",
+        ).execute()
+            
     except Exception as e:
         # 사용 자체는 성공시킨 뒤, 로그만 남김
         print("[USAGE-DB] upsert failed, but allow usage:", e)
@@ -1229,8 +1231,8 @@ async def convert_c_text_to_mermaid(
     if not user_id:
         raise HTTPException(status_code=400, detail="MISSING_USER_ID")
 
-    # 같은 코드면 사용 횟수를 올리지 않기 위해 해시를 만든다
-    code_hash = make_code_hash(source_code)
+    # 같은 코드 판정에 macro_defines까지 포함
+    code_hash = make_code_hash(source_code, macro_dict)
 
     # ===========================
     # 플랜 / 사용량 계산
@@ -1479,7 +1481,7 @@ async def get_usage(user_id: str):
         }
 
     # 2) 오늘 날짜 기준 usage_count 조회
-    today = date.today()
+    today = datetime.now(timezone.utc).date()
 
     db = get_supabase_client()
     
