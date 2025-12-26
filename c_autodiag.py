@@ -1025,6 +1025,34 @@ class StructuredFlowEmitter:
             raw = logical
             next_i = j + 1  # i..j까지 소비했으니 다음은 j+1
 
+            # [NEW] 함수 호출/표현식이 괄호 때문에 줄바꿈된 경우도 "한 줄"로 합치기
+            # 예) Det_ReportError(a,
+            #                   b,
+            #                   c);
+            stripped0 = raw.strip()
+            is_preproc = stripped0.startswith("#")
+            is_ctrl = re.match(r"^\s*(if|for|while|switch)\b", raw) is not None
+
+            if (not is_preproc) and (not is_ctrl):
+                # 괄호 밸런스가 남아있으면 다음 줄들을 계속 붙인다
+                paren_balance = raw.count("(") - raw.count(")")
+                saw_paren = ("(" in raw)
+
+                k = next_i
+                # 괄호를 봤고 balance가 0이 될 때까지 이어붙임
+                while saw_paren and paren_balance > 0 and k < n:
+                    nxt = lines[k].strip()
+                    # 빈 줄은 스킵(붙이진 않음)
+                    if not nxt:
+                        k += 1
+                        continue
+                    raw = raw.rstrip() + " " + nxt
+                    paren_balance += nxt.count("(") - nxt.count(")")
+                    k += 1
+
+                # i~(k-1)까지 소비했으면 next_i 갱신
+                next_i = k
+
             stripped = raw.strip()
             if not stripped or stripped in ("{", "}", ";"):
                 i = next_i
