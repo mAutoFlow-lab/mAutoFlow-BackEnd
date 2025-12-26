@@ -711,7 +711,7 @@ class StructuredFlowEmitter:
         return header_text
 
     def __init__(self, func_name: str, branch_shape: str = "rounded", macros: dict | None = None):
-        self.func_name = func_name
+        self.func_name = sanitize_func_name(func_name)
         self.branch_shape = branch_shape
         self.lines = []
         self.node_id = 0
