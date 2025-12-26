@@ -1061,10 +1061,10 @@ class StructuredFlowEmitter:
             # ---- 주석만 있는 줄은 무시 ----
             # (혹시 remove_comments()가 적용되지 않은 경로에서 사용할 때를 대비)
             if stripped.startswith("//"):
-                i += 1
+                i = next_i
                 continue
             if stripped.startswith("/*") and stripped.endswith("*/"):
-                i += 1
+                i = next_i
                 continue
 
             # 괄호나 &&, || 만 있는 라인은
@@ -1074,7 +1074,7 @@ class StructuredFlowEmitter:
             #       && cond2
             #       )
             if re.fullmatch(r"[()&|]+", stripped):
-                i += 1
+                i = next_i
                 continue
 
 
@@ -1118,7 +1118,7 @@ class StructuredFlowEmitter:
 
                 cur_prev = nid
                 any_node_created = True
-                i += 1
+                i = next_i
                 continue
             
 
@@ -1182,7 +1182,7 @@ class StructuredFlowEmitter:
                 self._register_entry(entry_holder, nid)
 
                 any_node_created = True
-                i += 1
+                i = next_i
 
                 if not is_top_level:
                     # 블록 내부에서는 goto 를 '마지막 노드'로 취급하고 종료
@@ -1216,7 +1216,7 @@ class StructuredFlowEmitter:
 
                 cur_prev = nid
                 any_node_created = True
-                i += 1
+                i = next_i
                 # break 이후 이 블록에서는 더 내려가지 않으므로 종료
                 break
 
@@ -1238,7 +1238,7 @@ class StructuredFlowEmitter:
 
                 cur_prev = nid
                 any_node_created = True
-                i += 1
+                i = next_i
                 # continue 이후 아래 코드는 실행되지 않으므로 종료
                 break
 
@@ -1266,7 +1266,7 @@ class StructuredFlowEmitter:
                     cur_prev = nid
 
                 any_node_created = True
-                i += 1
+                i = next_i
                 # return 이후 이 블록에서 더 이상 실행 경로가 없으므로 종료
                 break
 
@@ -1282,7 +1282,7 @@ class StructuredFlowEmitter:
                     
                 cur_prev = nid
                 any_node_created = True
-                i += 1
+                i = next_i
 
         if not any_node_created:
             # 아무 statement 가 없는 블록
