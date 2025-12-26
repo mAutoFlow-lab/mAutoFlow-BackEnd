@@ -297,7 +297,7 @@ def remove_comments(code: str) -> str:
     code = re.sub(r"//.*?$", "", code, flags=re.M)      # 라인 주석
     return code
 
-def extract_function_body(code: str, func_name: str) -> str:
+def extract_function_body(code: str, func_name: str, macros: dict | None = None) -> str:
     """
     텍스트에서 원하는 함수 하나의 본문만 뽑아냄.
     예: void main(void) { ... } 에서 { ... } 부분.
@@ -323,23 +323,46 @@ def extract_function_body(code: str, func_name: str) -> str:
 
     start_brace = m.end() - 1  # '{' 위치
 
-    depth = 1
-    i = start_brace + 1
-    while i < len(code_nc) and depth > 0:
-        ch = code_nc[i]
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-        i += 1
+    # ----------------------------
+    # (A) 1차: 기존 방식 그대로 시도
+    # ----------------------------
+    def _scan_to_matching_brace(text: str, start_idx: int) -> int | None:
+        depth = 1
+        i = start_idx + 1
+        while i < len(text) and depth > 0:
+            ch = text[i]
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+            i += 1
+        return (i - 1) if depth == 0 else None
 
-    if depth != 0:
+    end_brace = _scan_to_matching_brace(code_nc, start_brace)
+    if end_brace is not None:
+        return code_nc[start_brace + 1 : end_brace]
+
+    # ----------------------------
+    # (B) 2차: 전처리(#if/#else/#endif) 적용 후 다시 매칭
+    # ----------------------------
+    macros = macros or {}
+
+    tail = code_nc[start_brace:]              # '{'부터 끝까지
+    tail_lines = tail.splitlines()
+    tail_lines = splice_backslash_lines(tail_lines)
+    tail_lines = mini_preprocess_lines(tail_lines, macros)
+
+    tail_pp = "\n".join(tail_lines)
+    # 전처리 후에도 첫 글자가 '{'가 아닐 수 있으니 안전하게 찾기
+    first_brace = tail_pp.find("{")
+    if first_brace == -1:
         raise ValueError(f"Function {func_name} has mismatched curly brackets.")
 
-    end_brace = i - 1  # '}' 위치
-    body = code_nc[start_brace + 1 : end_brace]
-    return body
+    end2 = _scan_to_matching_brace(tail_pp, first_brace)
+    if end2 is None:
+        raise ValueError(f"Function {func_name} has mismatched curly brackets.")
 
+    return tail_pp[first_brace + 1 : end2]
 
 
 def extract_function_names(code: str):
@@ -2137,7 +2160,7 @@ def generate_flowchart_from_file(path: str, func_name: str, branch_shape: str = 
 
     code = p.read_text(encoding="utf-8", errors="ignore")
     func_name_clean = sanitize_func_name(func_name)   # ✅ 추가
-    body = extract_function_body(code, func_name_clean)
+    body = extract_function_body(code, func_name_clean, macros=macros or {})
 
     emitter = StructuredFlowEmitter(
         func_name_clean,
