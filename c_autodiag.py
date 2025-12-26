@@ -1190,10 +1190,74 @@ class StructuredFlowEmitter:
                 break
 
             # ---- 그 외 단순 statement ----
+            # (NEW) 멀티라인 statement(함수 호출 등)를 ';'까지 합쳐서 1노드로 만든다.
+            stmt_start_i = i
+            stmt = raw.rstrip()
+
+            def _paren_delta(s: str) -> int:
+                # 문자열/문자 리터럴까지 완벽히 하진 않지만, 현재 케이스(함수호출 줄바꿈)에는 충분
+                return s.count("(") - s.count(")")
+
+            paren_balance = _paren_delta(stmt)
+            j = i
+
+            def _is_comment_only(line: str) -> bool:
+                t = line.strip()
+                if not t:
+                    return True
+                if t.startswith("//"):
+                    return True
+                if t.startswith("/*") and t.endswith("*/"):
+                    return True
+                return False
+
+            # 전처리/제어문/라벨 라인은 여기 오기 전에 continue 되었어야 함
+            # 따라서 일반 statement에 대해서만 결합 수행
+            while True:
+                last = stmt.strip()
+
+                # 이미 문장 종료 조건이면 stop
+                if paren_balance <= 0 and last.endswith(";"):
+                    break
+
+                # 다음 줄이 없으면 stop
+                if j + 1 >= n:
+                    break
+
+                nxt_raw = lines[j + 1]
+                nxt = nxt_raw.strip()
+
+                # 의미 없는 줄은 스킵(단, 문장 결합은 유지)
+                if _is_comment_only(nxt_raw) or nxt in ("{", "}", ";"):
+                    j += 1
+                    continue
+
+                # 다음 줄이 전처리/제어문/라벨이면(비정상 포맷) 여기서 끊는다
+                nxt_l = nxt_raw.lstrip()
+                if nxt_l.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
+                    break
+                if re.match(r"\s*([A-Za-z_]\w*)\s*:\s*$", nxt_raw):
+                    break
+                if nxt_l.startswith(("if", "else", "for", "while", "switch", "do")):
+                    break
+
+                # 이어붙이기
+                stmt = stmt.rstrip() + " " + nxt
+                paren_balance += _paren_delta(nxt)
+                j += 1
+
+            # i는 소비한 줄만큼 점프
+            raw = stmt
+            stripped = raw.strip()
+            lstrip = raw.lstrip()
+            s_lower = stripped.lower()
+
             node_type = self._classify_simple(raw)
             nid = self.nid()
-            self._bind_node_line(nid, i)
+            self._bind_node_line(nid, stmt_start_i)  # 첫 줄에 매핑 유지
             label = self._clean_label(raw)
+            i = j + 1  # (중요) 아래에서 i += 1 하지 않도록, 여기서 이미 이동시킴
+
 
             if node_type == "terminator":
                 # return 문 노드
