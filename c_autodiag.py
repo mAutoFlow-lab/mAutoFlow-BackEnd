@@ -294,7 +294,7 @@ def extract_function_body(code: str, func_name: str) -> str:
     # f-string / format 안 쓰고, 문자열을 이어 붙여서 만든다.
     pattern = re.compile(
         r'^\s*'
-        r'(?:FUNC\s*\([^)]*\)\s*)?'        # AUTOSAR FUNC(...) (옵션)
+        r'(?:FUNC\s*\((?:[^()]|\([^()]*\))*\)\s*)?'   # ✅ 중첩 괄호 허용
         r'(?:[A-Za-z_][\w\s\*]*\s+)?'      # 반환형/수식어 (옵션)
         + re.escape(func_name) +
         r'\s*\('
@@ -341,7 +341,7 @@ def extract_function_names(code: str):
     func_pattern = re.compile(
         r"""
         ^\s*
-        (?:FUNC\s*\([^)]*\)\s*)?          # AUTOSAR FUNC(type, memclass) 매크로 (옵션)
+        (?:FUNC\s*\((?:[^()]|\([^()]*\))*\)\s*)?   # ✅ 중첩 괄호 허용
         (?:[A-Za-z_][\w\s\*]*\s+)?        # 일반 반환형/수식어 (옵션)
         ([A-Za-z_]\w*)                    # 함수 이름
         \s*\(
