@@ -987,10 +987,22 @@ class StructuredFlowEmitter:
         any_node_created = False
 
         while i < n:
+            start_line = i
             raw = lines[i]
+
+            # [NEW] C line-continuation: 끝이 '\' 인 줄은 다음 줄과 같은 "한 줄"로 합친다.
+            # - 전처리기(#if/#elif/...) 뿐 아니라, 매크로 호출/주석 라인에 붙는 '\'도 같이 정리됨
+            logical = raw.rstrip()
+            j = i
+            while logical.endswith("\\") and (j + 1) < n:
+                logical = logical[:-1].rstrip() + " " + lines[j + 1].lstrip()
+                j += 1
+            raw = logical
+            next_i = j + 1  # i..j까지 소비했으니 다음은 j+1
+
             stripped = raw.strip()
             if not stripped or stripped in ("{", "}", ";"):
-                i += 1
+                i = next_i
                 continue
 
             # ---- 주석만 있는 줄은 무시 ----
@@ -1018,7 +1030,7 @@ class StructuredFlowEmitter:
             # ---- 전처리기 (#if / #elif / #else / #endif / #ifdef / #ifndef) ----
             if stripped.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
                 nid = self.nid()
-                self._bind_node_line(nid, i)
+                self._bind_node_line(nid, start_line)   # ✅ 하이라이트는 첫 줄 기준
                 label = self._clean_label(stripped)
                 self.add(f'{nid}["{label}"]:::preprocess')
 
@@ -1031,7 +1043,7 @@ class StructuredFlowEmitter:
                 
                 cur_prev = nid
                 any_node_created = True
-                i += 1
+                i = next_i
                 continue
 
             # ---- label:  (예: NEGATIVE:) ----
