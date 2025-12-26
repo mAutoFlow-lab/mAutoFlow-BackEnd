@@ -877,38 +877,6 @@ class StructuredFlowEmitter:
             return "terminator"
         return "action"
 
-    def _is_plain_statement_head(self, s: str) -> bool:
-        """
-        '평문 statement'인지 판단.
-        - 전처리기/조건문/루프/스위치/라벨/점프/흐름제어문은 제외
-        """
-        t = (s or "").strip()
-        if not t:
-            return False
-
-        # 전처리기 / 블록 토큰
-        if t.startswith("#") or t in ("{", "}", ";"):
-            return False
-
-        # 라벨 (LABEL:)
-        if re.match(r"^[A-Za-z_]\w*\s*:\s*$", t):
-            return False
-
-        low = t.lower()
-
-        # 제어문 헤더(이건 절대 합치면 안 됨)
-        for kw in ("if", "else", "for", "while", "switch", "case", "default"):
-            if low.startswith(kw):
-                return False
-
-        # 흐름제어
-        for kw in ("goto", "break", "continue", "return"):
-            if low.startswith(kw):
-                return False
-
-        return True
-
-
     def _find_block(self, lines, brace_line_idx):
         """
         '{' 가 포함된 라인 인덱스를 받아,
@@ -1056,49 +1024,8 @@ class StructuredFlowEmitter:
                 i += 1
                 continue
 
-            # ------------------------------------------------------------------
-            # [NEW] 평문(statement)에서만 멀티라인 호출/표현식을 ';'까지 합친다.
-            #  - Det_ReportError(a,
-            #                    b,
-            #                    c);
-            #  => 한 노드로 만들기
-            #  - if/for/while/#if 같은 헤더는 절대 합치지 않음
-            # ------------------------------------------------------------------
-            if self._is_plain_statement_head(stripped):
-                stmt = stripped
-                k = next_i  # 현재 raw가 i..j 소비했으니, 다음 시작은 next_i
-                paren = stmt.count("(") - stmt.count(")")
 
-                # ';'가 아직 없으면 다음 줄을 이어붙이되,
-                # 괄호 밸런스(parens) 기준으로 statement가 끝날 때까지 확장
-                while k < n:
-                    # 이미 세미콜론이 있고 괄호도 닫혔으면 종료
-                    if (";" in stmt) and (paren <= 0):
-                        break
-
-                    nxt = lines[k].strip()
-                    if not nxt:
-                        k += 1
-                        continue
-                    # 다음 줄이 전처리기/제어문 헤더로 시작하면 절대 끼워넣지 않음
-                    if nxt.startswith("#"):
-                        break
-                    low = nxt.lower()
-                    if low.startswith(("if", "else", "for", "while", "switch", "case", "default")):
-                        break
-
-                    # statement에 붙이기
-                    stmt += " " + nxt
-                    paren += nxt.count("(") - nxt.count(")")
-                    k += 1
-
-                # stmt로 raw/stripped 갱신 + i 점프(소비한 라인까지)
-                raw = stmt
-                stripped = raw.strip()
-                lstrip = raw.lstrip()
-                i = k  # 이미 여기서 다음 라인으로 이동시킴
-            else:
-                lstrip = raw.lstrip()
+            lstrip = raw.lstrip()
 
             # ---- 전처리기 (#if / #elif / #else / #endif / #ifdef / #ifndef) ----
             if stripped.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
