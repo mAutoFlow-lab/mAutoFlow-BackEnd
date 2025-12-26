@@ -34,7 +34,7 @@ def _ensure_libclang():
     libclang.dll 경로를 자동으로 찾아서 clang.cindex에 등록.
     우선순위:
     1) 환경변수 CLANG_LIBRARY_FILE
-    2) 환경변수 LIBCLANG_PATH\libclang.dll
+    2) 환경변수 LIBCLANG_PATH/libclang.dll
     3) 흔한 설치 경로 후보(LLVM 설치 / MSYS2 mingw64)
     """
     try:
@@ -277,6 +277,19 @@ def preprocess_tree_vendor(src_root: str, out_root: str) -> None:
 # ---------------------------------------------------------------------------
 # (New) 미니 파서 + 분기 지원 플로우차트  — flowchart 전용, libclang 미사용
 # ---------------------------------------------------------------------------
+def sanitize_func_name(s: str) -> str:
+    """
+    UI/외부에서 'FUNC(...) Foo(...' 같은 문자열이 넘어와도
+    마지막 식별자(Foo)만 뽑아서 함수명으로 사용.
+    """
+    s = (s or "").strip()
+    if not s:
+        return s
+    # '(' 이전까지만 보되, 마지막 identifier를 뽑는다
+    head = s.split("(", 1)[0].strip()
+    m = re.search(r"([A-Za-z_]\w*)\s*$", head)
+    return m.group(1) if m else s
+
 
 def remove_comments(code: str) -> str:
     """//, /* */ 주석 제거 (대충이지만 웬만하면 잘 동작)"""
@@ -2081,10 +2094,11 @@ def generate_flowchart_from_file(path: str, func_name: str, branch_shape: str = 
         raise FileNotFoundError(path)
 
     code = p.read_text(encoding="utf-8", errors="ignore")
-    body = extract_function_body(code, func_name)
+    func_name_clean = sanitize_func_name(func_name)   # ✅ 추가
+    body = extract_function_body(code, func_name_clean)
 
     emitter = StructuredFlowEmitter(
-        func_name,
+        func_name_clean,
         branch_shape=branch_shape,
         macros=macros or {},
     )
