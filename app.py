@@ -721,12 +721,6 @@ def extract_full_function_signature(source_code: str, func_name: str) -> str:
         sig_start = matches[-1].start()
         return flat[sig_start:end_idx + 1].strip()
 
-    # 1) AUTOSAR FUNC(...) 패턴: FUNC(...) 부터 끝까지 사용
-    if macro_pos != -1:
-        sig_start = search_window_start + macro_pos
-        sig = flat[sig_start:end_idx + 1].strip()
-        return sig
-
     # 2) 일반 C 함수: 반환 타입까지 포함한 시그니처를 정규식으로 시도
     m2 = re.search(
         r"([A-Za-z_][\w\s\*\(\)]*\b" + re.escape(func_name) + r"\s*\([^)]*\))",
