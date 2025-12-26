@@ -717,7 +717,9 @@ def extract_full_function_signature(source_code: str, func_name: str) -> str:
     # AUTOSAR FUNC(...) 포함을 위해, 함수 이름 앞쪽에서 FUNC( 를 찾아본다.
     search_window_start = max(0, m.start() - 200)  # 뒤로 200자 정도만 본다.
     window = flat[search_window_start:m.start()]
-    macro_pos = window.rfind("FUNC(")
+    # "FUNC(" 뿐 아니라 "FUNC (" 같은 공백도 허용해서 마지막 FUNC를 찾는다
+    matches = list(re.finditer(r"\bFUNC\s*\(", window))
+    macro_pos = matches[-1].start() if matches else -1
 
     # 1) AUTOSAR FUNC(...) 패턴: FUNC(...) 부터 끝까지 사용
     if macro_pos != -1:
