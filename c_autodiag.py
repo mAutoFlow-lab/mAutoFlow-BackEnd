@@ -673,6 +673,33 @@ def parse_macro_string(s: str) -> dict:
     return macros
 
 
+def splice_backslash_lines(lines: list[str]) -> list[str]:
+    """
+    C preprocessor line-splicing:
+    라인이 '\' 로 끝나면 다음 라인과 이어붙여서 하나의 논리 라인으로 만든다.
+    (트레일링 공백 뒤의 '\' 도 처리)
+    """
+    out = []
+    buf = ""
+    for line in lines:
+        # 줄 끝 공백 제거 후 '\' 체크
+        stripped_r = line.rstrip("\r\n")
+        if stripped_r.rstrip().endswith("\\"):
+            # '\' 제거하고 이어붙이기(한 칸 띄워서)
+            part = stripped_r.rstrip()
+            part = part[:-1].rstrip()  # remove trailing '\'
+            buf += (part + " ")
+        else:
+            if buf:
+                out.append(buf + stripped_r)
+                buf = ""
+            else:
+                out.append(stripped_r)
+    if buf:
+        out.append(buf.rstrip())
+    return out
+
+
 
 class StructuredFlowEmitter:
     """
@@ -884,6 +911,7 @@ class StructuredFlowEmitter:
         self.node_id = 0
 
         raw_lines = body.splitlines()
+        raw_lines = splice_backslash_lines(raw_lines)   # ✅ '\'+newline 라인 결합
 
         # 미니 전처리기: 매크로가 지정되어 있으면, 먼저 전처리 통과
         if self.macros:
