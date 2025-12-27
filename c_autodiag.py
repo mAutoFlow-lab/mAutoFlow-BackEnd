@@ -1049,19 +1049,7 @@ class StructuredFlowEmitter:
                     while kk < n and not lines[kk].strip():
                         kk += 1
                     # 현재 줄이 식별자/함수명으로 끝나고, 다음 유효 줄이 '(' 로 시작하면 결합 시작
-                    callee_tail_re = r"""
-                    (?x)                                # verbose
-                    (?:\(\s*\*\s*)?                     # optional '(*'
-                    [A-Za-z_]\w*                        # identifier
-                    (?:\s*\))?                          # optional ')'
-                    (?:                                 # postfix chain
-                        \s*(?:->|\.)\s*[A-Za-z_]\w*     # ->member or .member
-                      | \s*\[[^\]]*\]                   # [index]
-                      | \s*\(\s*\)                      # postfix call: ()
-                    )*\s*$                              # end
-                    """
-
-                    if kk < n and lines[kk].lstrip().startswith("(") and re.search(callee_tail_re, raw.rstrip()):
+                    if kk < n and lines[kk].lstrip().startswith("(") and re.search(r"[A-Za-z_]\w*\s*$", raw.rstrip()):
                         raw = raw.rstrip() + " " + lines[kk].strip()
                         # 이제 '(' 를 봤으니 balance 기반 결합을 이어서 수행
                         paren_balance = raw.count("(") - raw.count(")")
