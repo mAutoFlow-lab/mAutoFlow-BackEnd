@@ -786,7 +786,8 @@ class StructuredFlowEmitter:
 
         self.goto_nodes = set()    # goto 문 노드들
 
-        self.node_span_map = {}  # nid -> (start,end) 0-based inclusive
+        # 노드 ID -> 함수 본문 내 라인 인덱스(0-based, body.splitlines() 기준)
+        self.node_line_map = {}
 
     def _is_loop_control_node(self, nid: str) -> bool:
         """현재 가장 안쪽 루프에서 break/continue 로 쓰이는 노드인지 확인"""
@@ -805,24 +806,16 @@ class StructuredFlowEmitter:
         if entry_holder is not None and not entry_holder:
             entry_holder.append(nid)
 
-    def _bind_node_span(self, nid, start_line, end_line):
+    def _bind_node_line(self, nid: str, line_idx: int) -> None:
         """
-        노드 nid가 커버하는 statement span을 (start_line, end_line)로 기록.
-        - start_line/end_line은 '함수 body 내부' 라인(0-based) 기준
+        node id 를 함수 본문 내 라인 인덱스에 매핑.
+        line_idx 는 body.splitlines() 기준 0-based.
         """
-        if start_line is None or end_line is None:
+        if line_idx is None:
             return
-
-        # 방어: 역전/음수 방지
-        start_line = int(start_line)
-        end_line = int(end_line)
-        if start_line < 0:
-            start_line = 0
-        if end_line < start_line:
-            end_line = start_line
-
-        self.node_span_map[nid] = (start_line, end_line)
-
+        if line_idx < 0:
+            return
+        self.node_line_map[nid] = int(line_idx)
 
         
     # ---- 공통 유틸 ----
@@ -1210,9 +1203,7 @@ class StructuredFlowEmitter:
             # ---- 전처리기 (#if / #elif / #else / #endif / #ifdef / #ifndef) ----
             if stripped.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
                 nid = self.nid()
-                span_end = max(start_line, next_i - 1)
-                self._bind_node_span(nid, start_line, span_end)
-                
+                self._bind_node_line(nid, start_line)   # ✅ 하이라이트는 첫 줄 기준
                 label = self._clean_label(stripped)
                 self.add(f'{nid}["{label}"]:::preprocess')
 
@@ -1232,9 +1223,7 @@ class StructuredFlowEmitter:
             m_label = re.match(r"\s*([A-Za-z_]\w*)\s*:\s*$", raw)
             if m_label:
                 nid = self.nid()
-                span_end = max(start_line, next_i - 1)
-                self._bind_node_span(nid, start_line, span_end)
-                
+                self._bind_node_line(nid, i)
                 label_txt = self._clean_label(raw)
                 self.add(f'{nid}["{label_txt}"]')
 
@@ -1294,9 +1283,7 @@ class StructuredFlowEmitter:
             # ---- goto ----
             if s_lower.startswith("goto"):
                 nid = self.nid()
-                span_end = max(start_line, next_i - 1)
-                self._bind_node_span(nid, start_line, span_end)
-                
+                self._bind_node_line(nid, i)
                 label_txt = self._clean_label(raw)
                 self.add(f'{nid}["{label_txt}"]')
 
@@ -1330,9 +1317,7 @@ class StructuredFlowEmitter:
             # ---- break / continue 특별 처리 ----
             if s_lower.startswith("break"):
                 nid = self.nid()
-                span_end = max(start_line, next_i - 1)
-                self._bind_node_span(nid, start_line, span_end)
-                                     
+                self._bind_node_line(nid, i)
                 label = self._clean_label(raw)
                 self.add(f'{nid}["{label}"]')
 
@@ -1357,9 +1342,7 @@ class StructuredFlowEmitter:
 
             if s_lower.startswith("continue"):
                 nid = self.nid()
-                span_end = max(start_line, next_i - 1)
-                self._bind_node_span(nid, start_line, span_end)
-                
+                self._bind_node_line(nid, i)
                 label = self._clean_label(raw)
                 self.add(f'{nid}["{label}"]')
 
@@ -1398,11 +1381,8 @@ class StructuredFlowEmitter:
 
             # ---- 그 외 단순 statement ----
             node_type = self._classify_simple(raw)
-            # dangling operator 결합(및 그 이전 결합들)까지 반영된 실제 statement span
-            span_end = max(start_line, next_i - 1)
-             
             nid = self.nid()
-            self._bind_node_span(nid, start_line, span_end)
+            self._bind_node_line(nid, i)
             label = self._clean_label(raw)
 
             if node_type == "terminator":
@@ -1550,7 +1530,7 @@ class StructuredFlowEmitter:
             cond_id = self.nid()
             last_cond_id = cond_id
             self.add(self._make_cond_node(cond_id, cond_label))
-            self._bind_node_span(cond_id, header_start, header_end)
+            self._bind_node_line(cond_id, header_start)
             self._register_entry(entry_holder, cond_id)
 
             # 이전 노드 → 현재 if
@@ -1855,7 +1835,7 @@ class StructuredFlowEmitter:
                 init_label = self._clean_label(init + ";")
                 self.add(f'{init_id}["{init_label}"]')
 
-                self._bind_node_span(init_id, idx, idx)
+                self._bind_node_line(init_id, idx)
                 
                 if edge_label:
                     self.add(f"{prev_node} -->|{edge_label}| {init_id}")
@@ -1875,7 +1855,7 @@ class StructuredFlowEmitter:
             cond_text = cond if cond else "for(;;)"
             cond_label = self._clean_cond_label(cond_text)
             self.add(self._make_cond_node(cond_id, cond_label))
-            self._bind_node_span(cond_id, idx, header_end)
+            self._bind_node_line(cond_id, idx)
             self._register_entry(entry_holder, cond_id)
 
             if cond_edge_label:
@@ -1897,7 +1877,7 @@ class StructuredFlowEmitter:
                     post_label = self._clean_label(post + ";")
                     self.add(f'{post_id}["{post_label}"]')
 
-                    self._bind_node_span(post_id, idx, idx)
+                    self._bind_node_line(post_id, idx)
 
                     if (
                         body_exit is not None
@@ -2010,7 +1990,7 @@ class StructuredFlowEmitter:
         loop_label = self._clean_cond_label(cond_text)
         
         self.add(self._make_cond_node(loop_id, loop_label))
-        self._bind_node_span(loop_id, idx, header_end)
+        self._bind_node_line(loop_id, idx)
         self._register_entry(entry_holder, loop_id)
 
         if prev_node is not None:
@@ -2093,7 +2073,7 @@ class StructuredFlowEmitter:
         do_id = self.nid()
         self.add(f'{do_id}["do"]')
 
-        self._bind_node_span(do_id, idx, idx)
+        self._bind_node_line(do_id, idx)
 
         if edge_label:
             self.add(f"{prev_node} -->|{edge_label}| {do_id}")
@@ -2169,7 +2149,7 @@ class StructuredFlowEmitter:
         loop_id = self.nid()
         loop_label = self._clean_cond_label(cond_line)
         self.add(self._make_cond_node(loop_id, loop_label))
-        self._bind_node_span(loop_id, cond_line_idx, cond_line_idx)
+        self._bind_node_line(loop_id, cond_line_idx)
 
         # 정상적으로 body 를 빠져나온 경로만 cond 로 연결
         if (
