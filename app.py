@@ -1267,7 +1267,7 @@ async def convert_c_text_to_mermaid(
     # 플로우차트 생성
     # ===========================
     try:
-        mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
+        mermaid, func_name, node_spans, node_lines, full_signature = generate_mermaid_auto(
             source_code,
             branch_shape=branch_shape,
             macros=macro_dict,
@@ -1327,7 +1327,7 @@ async def convert_c_text_to_mermaid(
                 "full_signature": full_signature,
                 "node_spans": node_spans,
                 "node_lines": node_lines,
-                "node_count": node_spans,
+                "node_count": len(node_spans),
                 "usage_count": usage_count,
                 "daily_free_limit": DAILY_FREE_LIMIT,
                 "free_node_limit": FREE_NODE_LIMIT,
@@ -1393,7 +1393,7 @@ async def export_diagram(
         macro_dict = parse_macro_defines(macro_defines)
 
         if source_code:
-            mermaid, func_name, node_lines, full_signature = generate_mermaid_auto(
+            mermaid, func_name, node_spans, node_lines, full_signature = generate_mermaid_auto
                 source_code,
                 branch_shape=branch_shape,
                 macros=macro_dict,
