@@ -1106,6 +1106,26 @@ class StructuredFlowEmitter:
 
                 next_i = k
 
+            # [NEW] operator 결합으로 '(' 가 새로 붙은 경우가 있음 (예: "a =\n (uint16)(" )
+            #       그래서 paren_balance를 "다시" 계산해서 ')' 닫힐 때까지 한 번 더 합친다.
+            stripped0 = raw.strip()
+            is_preproc = stripped0.startswith("#")
+            is_ctrl = re.match(r"^\s*(if|for|while|switch)\b", raw) is not None
+            if (not is_preproc) and (not is_ctrl):
+                paren_balance = raw.count("(") - raw.count(")")
+                saw_paren = ("(" in raw)
+                k = next_i
+                while saw_paren and paren_balance > 0 and k < n:
+                    nxt = lines[k].strip()
+                    if not nxt:
+                        k += 1
+                        continue
+                    raw = raw.rstrip() + " " + nxt
+                    paren_balance += nxt.count("(") - nxt.count(")")
+                    k += 1
+                next_i = k
+
+
             stripped = raw.strip()
             if not stripped or stripped in ("{", "}", ";"):
                 i = next_i
