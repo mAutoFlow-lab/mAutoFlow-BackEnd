@@ -1038,6 +1038,36 @@ class StructuredFlowEmitter:
                 paren_balance = raw.count("(") - raw.count(")")
                 saw_paren = ("(" in raw)
 
+
+                # [NEW] 함수 호출이 다음 줄에서 '(' 로 시작하는 스타일 지원
+                # 예)
+                #   x = foo
+                #       (a, b);
+                # → 첫 줄에는 '(' 가 없어서 기존 로직으로는 결합이 시작되지 않음
+                if not saw_paren:
+                    kk = next_i
+                    while kk < n and not lines[kk].strip():
+                        kk += 1
+                    # 현재 줄이 식별자/함수명으로 끝나고, 다음 유효 줄이 '(' 로 시작하면 결합 시작
+                    callee_tail_re = r"""
+                    (?x)                                # verbose
+                    (?:\(\s*\*\s*)?                     # optional '(*'
+                    [A-Za-z_]\w*                        # identifier
+                    (?:\s*\))?                          # optional ')'
+                    (?:                                 # postfix chain
+                        \s*(?:->|\.)\s*[A-Za-z_]\w*     # ->member or .member
+                      | \s*\[[^\]]*\]                   # [index]
+                      | \s*\(\s*\)                      # postfix call: ()
+                    )*\s*$                              # end
+                    """
+
+                    if kk < n and lines[kk].lstrip().startswith("(") and re.search(callee_tail_re, raw.rstrip()):
+                        raw = raw.rstrip() + " " + lines[kk].strip()
+                        # 이제 '(' 를 봤으니 balance 기반 결합을 이어서 수행
+                        paren_balance = raw.count("(") - raw.count(")")
+                        saw_paren = True
+                        next_i = kk + 1
+
                 k = next_i
                 # 괄호를 봤고 balance가 0이 될 때까지 이어붙임
                 while saw_paren and paren_balance > 0 and k < n:
