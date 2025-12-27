@@ -1053,20 +1053,26 @@ class StructuredFlowEmitter:
                 # i~(k-1)까지 소비했으면 next_i 갱신
                 next_i = k
 
-            # [NEW] operator-leading continuation
-            # 예:
-            #   expr)
-            #       << SHIFT;
+            # [NEW] 연산자 줄바꿈 결합 (두 스타일 모두 지원)
+            # 1) operator-leading:  다음 줄이 '<<', '&&' 등 연산자로 시작
+            # 2) operator-trailing: 현재 줄이 '<<', '&&' 등 연산자로 끝나고 다음 줄이 식별자/상수로 시작
+            op_leading_re = r"^(<<|>>|&&|\|\||\+=|-=|\*=|/=|%=|&=|\|=|\^=|==|!=|<=|>=|[+\-*/%&|^=<>?:])"
+            op_trailing_re = r"(<<|>>|&&|\|\||\+=|-=|\*=|/=|%=|&=|\|=|\^=|==|!=|<=|>=|[+\-*/%&|^=<>?:])\s*$"
+
+            stripped0 = raw.strip()
+            is_preproc = stripped0.startswith("#")
+            is_ctrl = re.match(r"^\s*(if|for|while|switch)\b", raw) is not None
             if (not is_preproc) and (not is_ctrl):
                 k = next_i
                 while k < n and not raw.strip().endswith(";"):
-                    nxt = lines[k].strip()
+                    nxt_raw = lines[k]
+                    nxt = nxt_raw.strip()
 
                     if not nxt:
                         k += 1
                         continue
 
-                    # 전처리기 / 블록 경계 / 라벨 / case 는 중단
+                    # 전처리기/블록 경계/라벨/case 는 여기서 끊기
                     if (
                         nxt.startswith("#")
                         or nxt in ("{", "}")
@@ -1075,11 +1081,14 @@ class StructuredFlowEmitter:
                     ):
                         break
 
-                    # 연산자로 시작하는 줄이면 같은 statement
-                    if re.match(
-                        r"^(<<|>>|&&|\|\||\+=|-=|\*=|/=|%=|&=|\|=|\^=|==|!=|<=|>=|[+\-*/%&|^=<>?:])",
-                        nxt,
-                    ):
+                    # (1) 다음 줄이 연산자로 시작하면 붙이기
+                    if re.match(op_leading_re, nxt):
+                        raw = raw.rstrip() + " " + nxt
+                        k += 1
+                        continue
+
+                    # (2) 현재 줄이 연산자로 끝나면, 다음 줄이 식별자/상수로 시작하는 경우도 붙이기
+                    if re.search(op_trailing_re, raw.rstrip()):
                         raw = raw.rstrip() + " " + nxt
                         k += 1
                         continue
