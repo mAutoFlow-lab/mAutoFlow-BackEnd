@@ -1855,7 +1855,7 @@ class StructuredFlowEmitter:
                 init_label = self._clean_label(init + ";")
                 self.add(f'{init_id}["{init_label}"]')
 
-                self._bind_node_line(init_id, idx)
+                self._bind_node_span(init_id, idx, idx)
                 
                 if edge_label:
                     self.add(f"{prev_node} -->|{edge_label}| {init_id}")
@@ -1875,7 +1875,7 @@ class StructuredFlowEmitter:
             cond_text = cond if cond else "for(;;)"
             cond_label = self._clean_cond_label(cond_text)
             self.add(self._make_cond_node(cond_id, cond_label))
-            self._bind_node_line(cond_id, idx)
+            self._bind_node_span(cond_id, idx, header_end)
             self._register_entry(entry_holder, cond_id)
 
             if cond_edge_label:
@@ -1897,7 +1897,7 @@ class StructuredFlowEmitter:
                     post_label = self._clean_label(post + ";")
                     self.add(f'{post_id}["{post_label}"]')
 
-                    self._bind_node_line(post_id, idx)
+                    self._bind_node_span(post_id, idx, idx)
 
                     if (
                         body_exit is not None
@@ -2010,7 +2010,7 @@ class StructuredFlowEmitter:
         loop_label = self._clean_cond_label(cond_text)
         
         self.add(self._make_cond_node(loop_id, loop_label))
-        self._bind_node_line(loop_id, idx)
+        self._bind_node_span(loop_id, idx, header_end)
         self._register_entry(entry_holder, loop_id)
 
         if prev_node is not None:
@@ -2093,7 +2093,7 @@ class StructuredFlowEmitter:
         do_id = self.nid()
         self.add(f'{do_id}["do"]')
 
-        self._bind_node_line(do_id, idx)
+        self._bind_node_span(do_id, idx, idx)
 
         if edge_label:
             self.add(f"{prev_node} -->|{edge_label}| {do_id}")
@@ -2169,7 +2169,7 @@ class StructuredFlowEmitter:
         loop_id = self.nid()
         loop_label = self._clean_cond_label(cond_line)
         self.add(self._make_cond_node(loop_id, loop_label))
-        self._bind_node_line(loop_id, cond_line_idx)
+        self._bind_node_span(loop_id, cond_line_idx, cond_line_idx)
 
         # 정상적으로 body 를 빠져나온 경로만 cond 로 연결
         if (
