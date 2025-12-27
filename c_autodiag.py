@@ -1393,6 +1393,49 @@ class StructuredFlowEmitter:
         final_else_idx = None
         after_idx = None
 
+
+        # [ADD] _handle_if() 안쪽(while True 전에) 로컬 헬퍼 추가
+        def _match_inline_brace_block(s: str):
+            """
+            한 줄 s 안에서 첫 '{' 기준으로 매칭되는 '}' 위치를 찾는다.
+            같은 줄에서 outer 블록이 닫히면 (open_idx, close_idx, inner_text) 반환.
+            못 찾으면 None.
+            """
+            if "{" not in s or "}" not in s:
+                return None
+            open_idx = s.find("{")
+            depth = 0
+            for k in range(open_idx, len(s)):
+                if s[k] == "{":
+                    depth += 1
+                elif s[k] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        close_idx = k
+                        inner = s[open_idx + 1 : close_idx]
+                        return open_idx, close_idx, inner
+            return None
+
+        def _inline_to_lines(inner: str) -> list[str]:
+            """
+            inline 블록 문자열을 파서가 읽을 수 있게 줄로 펼친다.
+            ; { } 뒤에 개행을 강제로 넣어서 '정상 포맷'처럼 만든다.
+            """
+            out = []
+            buf = []
+            for ch in inner:
+                buf.append(ch)
+                if ch in [";", "{", "}"]:
+                    line = "".join(buf).strip()
+                    if line:
+                        out.append(line)
+                    buf = []
+            tail = "".join(buf).strip()
+            if tail:
+                out.append(tail)
+            return out
+        
+
         while True:
             # ----- 조건 헤더(멀티라인) 수집 -----
             header_start = i
@@ -1462,8 +1505,16 @@ class StructuredFlowEmitter:
                         inline_stmt = None
 
             if brace_idx is not None:
-                # 일반 { ... } 블록
-                then_start, then_end, after_then = self._find_block(lines, brace_idx)
+                # ✅ [NEW] 같은 줄에 { ... } 가 닫히는 inline 블록이면 내용 유실 방지
+                m_inline_blk = _match_inline_brace_block(lines[brace_idx])
+                if m_inline_blk is not None:
+                    _, _, inner = m_inline_blk
+                    temp_lines = _inline_to_lines(inner)
+                    then_start, then_end = 0, len(temp_lines)
+                    after_then = brace_idx + 1
+                else:
+                    # 일반 { ... } 블록(여러 줄)
+                    then_start, then_end, after_then = self._find_block(lines, brace_idx)
             elif temp_lines is not None:
                 # if(cond) stmt; 형태 (중괄호 없음)
                 then_start, then_end = 0, 1
@@ -1531,8 +1582,16 @@ class StructuredFlowEmitter:
                 if m < end_idx and "{" in lines[m]:
                     brace_idx = m
 
+            else_temp_lines = None
+
             if brace_idx is not None:
-                else_start, else_end, after_else = self._find_block(lines, brace_idx)
+                m_inline_blk = _match_inline_brace_block(lines[brace_idx])
+                if m_inline_blk is not None:
+                    _, _, inner = m_inline_blk
+                    else_temp_lines = _inline_to_lines(inner)
+                    else_start, else_end, after_else = 0, len(else_temp_lines), brace_idx + 1
+                else:
+                    else_start, else_end, after_else = self._find_block(lines, brace_idx)
             else:
                 m = final_else_idx + 1
                 while m < end_idx and not lines[m].strip():
@@ -1543,9 +1602,14 @@ class StructuredFlowEmitter:
             if else_start is not None and not _block_is_effectively_empty(
                 lines, else_start, else_end
             ):
-                else_exit = self._parse_sequence(
-                    lines, else_start, else_end, last_cond_id, first_edge_label="False"
-                )
+                if else_temp_lines is not None:
+                    else_exit = self._parse_sequence(
+                        else_temp_lines, 0, len(else_temp_lines), last_cond_id, first_edge_label="False"
+                    )
+                else:
+                    else_exit = self._parse_sequence(
+                        lines, else_start, else_end, last_cond_id, first_edge_label="False"
+                    )
 
                 # 실질적으로 다음으로 이어지는 분기들만 모음
                 non_terminals = []
