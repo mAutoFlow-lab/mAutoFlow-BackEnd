@@ -1081,6 +1081,15 @@ class StructuredFlowEmitter:
                     ):
                         break
 
+                    # (0) close-only continuation:
+                    #     ')', ');', '),', '))', '));', '})', '});', '},', '])', '];', '],', ')),' 등
+                    #     "닫는 괄호/브레이스/대괄호 + (선택) 세미콜론/콤마" 만 있는 줄은
+                    #     앞 statement에 붙여서 ');' 같은 조각 노드가 생기는 것을 막는다.
+                    if re.match(r"^[\)\]\}]+[;,]?$", nxt):
+                        raw = raw.rstrip() + " " + nxt
+                        k += 1
+                        continue
+
                     # (1) 다음 줄이 연산자로 시작하면 붙이기
                     if re.match(op_leading_re, nxt):
                         raw = raw.rstrip() + " " + nxt
