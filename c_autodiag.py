@@ -1053,6 +1053,41 @@ class StructuredFlowEmitter:
                 # i~(k-1)까지 소비했으면 next_i 갱신
                 next_i = k
 
+            # [NEW] operator-leading continuation
+            # 예:
+            #   expr)
+            #       << SHIFT;
+            if (not is_preproc) and (not is_ctrl):
+                k = next_i
+                while k < n and not raw.strip().endswith(";"):
+                    nxt = lines[k].strip()
+
+                    if not nxt:
+                        k += 1
+                        continue
+
+                    # 전처리기 / 블록 경계 / 라벨 / case 는 중단
+                    if (
+                        nxt.startswith("#")
+                        or nxt in ("{", "}")
+                        or re.match(r"^[A-Za-z_]\w*\s*:\s*$", nxt)
+                        or re.match(r"^(case\b|default\s*:)", nxt)
+                    ):
+                        break
+
+                    # 연산자로 시작하는 줄이면 같은 statement
+                    if re.match(
+                        r"^(<<|>>|&&|\|\||\+=|-=|\*=|/=|%=|&=|\|=|\^=|==|!=|<=|>=|[+\-*/%&|^=<>?:])",
+                        nxt,
+                    ):
+                        raw = raw.rstrip() + " " + nxt
+                        k += 1
+                        continue
+
+                    break
+
+                next_i = k
+
             stripped = raw.strip()
             if not stripped or stripped in ("{", "}", ";"):
                 i = next_i
