@@ -923,13 +923,9 @@ def generate_mermaid_auto(
     )
     mermaid = emitter.emit_from_body(body)
 
-    node_lines = {
-        nid: body_start_line + line_idx
-        for nid, line_idx in emitter.node_line_map.items()
-    }
-
-    # full_signature 를 함께 리턴
-    return mermaid, func_name, node_lines, full_signature
+    node_spans = { nid: [body_start_line+s, body_start_line+e] for nid,(s,e) in emitter.node_span_map.items() }
+    node_lines = { nid: span[0] for nid, span in node_spans.items() }  # 호환용
+    return mermaid, func_name, node_spans, node_lines, full_signature
 
 # Mermaid CLI 설정 (PDF/PNG 글자 누락 방지용)
 _MERMAID_CLI_CONFIG = {
@@ -1329,8 +1325,9 @@ async def convert_c_text_to_mermaid(
                 "mermaid": mermaid,
                 "func_name": func_name,
                 "full_signature": full_signature,
+                "node_spans": node_spans,
                 "node_lines": node_lines,
-                "node_count": node_count,
+                "node_count": node_spans,
                 "usage_count": usage_count,
                 "daily_free_limit": DAILY_FREE_LIMIT,
                 "free_node_limit": FREE_NODE_LIMIT,
