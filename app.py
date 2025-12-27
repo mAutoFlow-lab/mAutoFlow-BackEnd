@@ -1393,7 +1393,7 @@ async def export_diagram(
         macro_dict = parse_macro_defines(macro_defines)
 
         if source_code:
-            mermaid, func_name, node_spans, node_lines, full_signature = generate_mermaid_auto
+            mermaid, func_name, node_spans, node_lines, full_signature = generate_mermaid_auto(
                 source_code,
                 branch_shape=branch_shape,
                 macros=macro_dict,
