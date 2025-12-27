@@ -1362,6 +1362,23 @@ class StructuredFlowEmitter:
                 # continue 이후 아래 코드는 실행되지 않으므로 종료
                 break
 
+
+            # [NEW] 최종 안전장치: 현재 raw가 연산자로 끝났으면 다음 유효 라인 1개를 강제로 붙인다.
+            # 예) "... ) /" 다음 줄 "100.0F;" 가 단독 노드로 떨어지는 것을 방지
+            dangling_op_re = r"(<<|>>|&&|\|\||\+=|-=|\*=|/=|%=|&=|\|=|\^=|==|!=|<=|>=|[+\-*/%&|^=<>?:])\s*$"
+
+            if re.search(dangling_op_re, raw.rstrip()):
+                k2 = next_i
+                # 빈 줄만 스킵
+                while k2 < n and not lines[k2].strip():
+                    k2 += 1
+                if k2 < n:
+                    peek = lines[k2].strip()
+                    # 블록/전처리기/라벨/case면 붙이지 않음
+                    if not (peek.startswith("#") or peek in ("{", "}") or re.match(r"^[A-Za-z_]\w*\s*:\s*$", peek) or re.match(r"^(case\b|default\s*:)", peek)):
+                        raw = raw.rstrip() + " " + peek
+                        next_i = k2 + 1
+
             # ---- 그 외 단순 statement ----
             node_type = self._classify_simple(raw)
             nid = self.nid()
