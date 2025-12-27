@@ -810,11 +810,13 @@ class StructuredFlowEmitter:
         node id 를 함수 본문 내 라인 인덱스에 매핑.
         line_idx 는 body.splitlines() 기준 0-based.
         """
-        if line_idx is None:
+       if start_line is None or end_line is None:
             return
-        if line_idx < 0:
-            return
-        self.node_span_map[nid] = (start_line, end_line)
+       if start_line < 0:
+           return
+       if end_line < start_line:
+           end_line = start_line
+       self.node_span_map[nid] = (int(start_line), int(end_line))
 
         
     # ---- 공통 유틸 ----
