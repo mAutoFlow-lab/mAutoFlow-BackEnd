@@ -1292,7 +1292,7 @@ async def convert_c_text_to_mermaid(
             mermaid = re.sub(pattern_start, f"start {display_name}", mermaid)
             mermaid = re.sub(pattern_end,   f"end {display_name}",   mermaid)
 
-        node_count = len(node_lines)
+        node_count = len(node_spans)
 
         # ===========================
         # 노드 제한 체크
