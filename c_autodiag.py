@@ -1078,6 +1078,12 @@ class StructuredFlowEmitter:
             op_leading_re = r"^(<<|>>|&&|\|\||\+=|-=|\*=|/=|%=|&=|\|=|\^=|==|!=|<=|>=|[+\-*/%&|^=<>?:])"
             op_trailing_re = r"(<<|>>|&&|\|\||\+=|-=|\*=|/=|%=|&=|\|=|\^=|==|!=|<=|>=|[+\-*/%&|^=<>?:])\s*$"
 
+            # ✅ 추가: "연산자만 있는 줄" (예: "/" 단독 라인)
+            op_only_re = r"^(<<|>>|&&|\|\||\+=|-=|\*=|/=|%=|&=|\|=|\^=|==|!=|<=|>=|[+\-*/%&|^=<>?:])\s*$"
+
+            # ✅ 추가: "닫는 괄호 + 연산자"가 statement 끝에 붙어 있는 상태 감지 (예: ") /", ") <<")
+            close_op_trailing_re = r"[\)\]\}]+\s*(<<|>>|&&|\|\||\+=|-=|\*=|/=|%=|&=|\|=|\^=|==|!=|<=|>=|[+\-*/%&|^=<>?:])\s*$"
+
             stripped0 = raw.strip()
             is_preproc = stripped0.startswith("#")
             is_ctrl = re.match(r"^\s*(if|for|while|switch)\b", raw) is not None
@@ -1112,6 +1118,24 @@ class StructuredFlowEmitter:
                         raw = raw.rstrip() + " " + nxt
                         k += 1
                         continue
+
+                    # ✅ (0.5) 연산자만 단독으로 있는 줄도 붙이기
+                    # 예) 
+                    #   ) 
+                    #   /
+                    #   100.0F;
+                    if re.match(op_only_re, nxt):
+                        raw = raw.rstrip() + " " + nxt
+                        k += 1
+                        continue
+
+                    # ✅ (0.6) 현재 raw가 "닫는괄호 + 연산자"로 끝나면 다음 줄은 무조건 이어붙이기
+                    # 예) ") /" 다음 줄 "100.0F;"
+                    if re.search(close_op_trailing_re, raw.rstrip()):
+                        raw = raw.rstrip() + " " + nxt
+                        k += 1
+                        continue
+                
 
                     # (1) 다음 줄이 연산자로 시작하면 붙이기
                     if re.match(op_leading_re, nxt):
