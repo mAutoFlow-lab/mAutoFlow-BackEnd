@@ -786,8 +786,7 @@ class StructuredFlowEmitter:
 
         self.goto_nodes = set()    # goto 문 노드들
 
-        # 노드 ID -> 함수 본문 내 라인 인덱스(0-based, body.splitlines() 기준)
-        self.node_line_map = {}
+        self.node_span_map = {}  # nid -> (start,end) 0-based inclusive
 
     def _is_loop_control_node(self, nid: str) -> bool:
         """현재 가장 안쪽 루프에서 break/continue 로 쓰이는 노드인지 확인"""
@@ -806,7 +805,7 @@ class StructuredFlowEmitter:
         if entry_holder is not None and not entry_holder:
             entry_holder.append(nid)
 
-    def _bind_node_line(self, nid: str, line_idx: int) -> None:
+    def _bind_node_span(self, nid, start_line, end_line):
         """
         node id 를 함수 본문 내 라인 인덱스에 매핑.
         line_idx 는 body.splitlines() 기준 0-based.
@@ -815,7 +814,7 @@ class StructuredFlowEmitter:
             return
         if line_idx < 0:
             return
-        self.node_line_map[nid] = int(line_idx)
+        self.node_span_map[nid] = (start_line, end_line)
 
         
     # ---- 공통 유틸 ----
@@ -1381,8 +1380,11 @@ class StructuredFlowEmitter:
 
             # ---- 그 외 단순 statement ----
             node_type = self._classify_simple(raw)
+            # dangling operator 결합(및 그 이전 결합들)까지 반영된 실제 statement span
+            span_end = max(start_line, next_i - 1)
+             
             nid = self.nid()
-            self._bind_node_line(nid, i)
+            self._bind_node_span(nid, start_line, span_end)
             label = self._clean_label(raw)
 
             if node_type == "terminator":
@@ -1530,7 +1532,7 @@ class StructuredFlowEmitter:
             cond_id = self.nid()
             last_cond_id = cond_id
             self.add(self._make_cond_node(cond_id, cond_label))
-            self._bind_node_line(cond_id, header_start)
+            self._bind_node_span(cond_id, header_start, header_end)
             self._register_entry(entry_holder, cond_id)
 
             # 이전 노드 → 현재 if
