@@ -1044,7 +1044,8 @@ class StructuredFlowEmitter:
                 #   x = foo
                 #       (a, b);
                 # → 첫 줄에는 '(' 가 없어서 기존 로직으로는 결합이 시작되지 않음
-                if not saw_paren:
+                # 변경 (핵심: cast 괄호 때문에 saw_paren=True 인 경우도 포함)
+                if (not saw_paren) or (saw_paren and paren_balance == 0):
                     kk = next_i
                     while kk < n and not lines[kk].strip():
                         kk += 1
@@ -1099,11 +1100,13 @@ class StructuredFlowEmitter:
                     ):
                         break
 
-                    # (0) close-only continuation:
-                    #     ')', ');', '),', '))', '));', '})', '});', '},', '])', '];', '],', ')),' 등
-                    #     "닫는 괄호/브레이스/대괄호 + (선택) 세미콜론/콤마" 만 있는 줄은
-                    #     앞 statement에 붙여서 ');' 같은 조각 노드가 생기는 것을 막는다.
-                    if re.match(r"^[\)\]\}]+[;,]?$", nxt):
+                    # (0) close-only continuation 확장:
+                    #  - 닫는 괄호만 있는 줄:        ")", ");", "}"
+                    #  - 닫는 괄호 + 연산자 줄:     ") * 60U;", ") /", ") << CCR_IF_SHIFT;"
+                    if (
+                        re.match(r"^[\)\]\}]+\s*[;]?$", nxt)
+                        or re.match(r"^[\)\]\}]+\s*(<<|>>|&&|\|\||\+=|-=|\*=|/=|%=|&=|\|=|\^=|==|!=|<=|>=|[+\-*/%&|^=<>?:])", nxt)
+                    ):
                         raw = raw.rstrip() + " " + nxt
                         k += 1
                         continue
