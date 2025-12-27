@@ -1331,7 +1331,7 @@ class StructuredFlowEmitter:
             if s_lower.startswith("break"):
                 nid = self.nid()
                 span_end = max(start_line, next_i - 1)
-                self._bind_node_span(nid, start_line, span_end
+                self._bind_node_span(nid, start_line, span_end)
                                      
                 label = self._clean_label(raw)
                 self.add(f'{nid}["{label}"]')
