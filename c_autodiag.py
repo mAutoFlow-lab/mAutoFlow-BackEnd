@@ -1740,19 +1740,38 @@ class StructuredFlowEmitter:
         j = idx
         saw_paren = False
 
+        def _ends_with_dangling_op(s: str) -> bool:
+            # while/for 헤더에서 다음 줄이 이어져야 하는 패턴들
+            s = s.rstrip()
+            return (
+                s.endswith("&&") or s.endswith("||") or
+                s.endswith("&")  or s.endswith("|")  or
+                s.endswith("+")  or s.endswith("-")  or
+                s.endswith("*")  or s.endswith("/")  or
+                s.endswith("%")  or
+                s.endswith(",")  or
+                s.endswith("(")
+            )
+
         while j < end_idx:
             line = lines[j]
             header_lines.append(line)
+
             if "(" in line:
                 saw_paren = True
             paren_balance += line.count("(") - line.count(")")
-            # 괄호를 한 번이라도 봤고, balance가 0이 되면 헤더 종료
+
+            # ✅ 괄호가 닫혀도, 줄 끝이 '&&' 같은 dangling operator면 다음 줄을 헤더에 포함해야 함
             if saw_paren and paren_balance <= 0:
+                if _ends_with_dangling_op(line.strip()):
+                    j += 1
+                    continue
                 break
-            # 단일라인 헤더(괄호가 없는 for(;;) 같은 케이스)는 여기서 끝내지 않음
+
             j += 1
 
         header_end = j if j < end_idx else idx
+        
         # ✅ 헤더 통합본 (줄 경계에서 "((" 같은 토큰이 깨지지 않게 smart-join)
         loop_line = ""
         for t in [x.strip() for x in header_lines]:
