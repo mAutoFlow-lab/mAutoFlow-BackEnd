@@ -1174,6 +1174,47 @@ class StructuredFlowEmitter:
 
 
             stripped = raw.strip()
+
+            # ✅ [NEW] 함수 내부의 anonymous struct/union 선언을 "한 노드"로 묶기
+            # 예)
+            #   static struct
+            #   {
+            #       u8 A;
+            #   }EaRestrict;
+            #
+            # 위 형태가 "static struct" / "멤버" / "}EaRestrict;" 로 쪼개지는 현상 방지
+            if re.match(r"^(?:static\s+)?(?:struct|union)\b", stripped) and ";" not in stripped:
+                # 다음 유효 라인이 "{" 로 시작하면 struct/union 블록 선언으로 간주
+                k = next_i
+                while k < n and not lines[k].strip():
+                    k += 1
+
+                if k < n and lines[k].strip().startswith("{"):
+                    parts = [stripped]  # "static struct" 또는 "struct" 등
+                    k2 = k
+
+                    # 블록 전체를 끝(닫는 brace + ; 포함)까지 모은다
+                    while k2 < n:
+                        s2 = lines[k2].strip()
+                        if not s2:
+                            k2 += 1
+                            continue
+
+                        parts.append(s2)
+
+                        # 종료 조건:
+                        #  - "};"
+                        #  - "}Name;" / "} Name;" 형태
+                        if s2 == "};" or re.match(r"^\}\s*[A-Za-z_]\w*\s*;\s*$", s2):
+                            k2 += 1
+                            break
+
+                        k2 += 1
+
+                    raw = " ".join(parts)
+                    next_i = k2
+                    stripped = raw.strip()
+            
             if not stripped or stripped in ("{", "}", ";"):
                 i = next_i
                 continue
