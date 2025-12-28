@@ -2058,7 +2058,7 @@ class StructuredFlowEmitter:
         if "{" in loop_line:
             brace_idx = idx
         else:
-            j = idx + 1
+            j = base_idx + 1   # ✅ 헤더 끝 다음 줄부터 '{' 찾기
             while j < end_idx and not lines[j].strip():
                 j += 1
             if j < end_idx and "{" in lines[j]:
@@ -2067,7 +2067,7 @@ class StructuredFlowEmitter:
         if brace_idx is not None:
             body_start, body_end, after_idx = self._find_block(lines, brace_idx)
         else:
-            j = idx + 1
+            j = base_idx + 1
             while j < end_idx and not lines[j].strip():
                 j += 1
             body_start, body_end, after_idx = j, j + 1, j + 1
