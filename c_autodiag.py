@@ -1788,6 +1788,7 @@ class StructuredFlowEmitter:
 
 
         header_end = j if j < end_idx else idx
+        base_idx = header_end   # ✅ 멀티라인 헤더의 "마지막 줄 index"
         
         # ✅ 헤더 통합본 (줄 경계에서 "((" 같은 토큰이 깨지지 않게 smart-join)
         loop_line = ""
@@ -1862,7 +1863,7 @@ class StructuredFlowEmitter:
             if "{" in loop_line:
                 brace_idx = idx
             else:
-                j = idx + 1
+                j = base_idx + 1   # ✅ 헤더 끝 다음 줄부터 찾기
                 while j < end_idx and not lines[j].strip():
                     j += 1
                 if j < end_idx and "{" in lines[j]:
@@ -1871,7 +1872,7 @@ class StructuredFlowEmitter:
             if brace_idx is not None:
                 body_start, body_end, after_idx = self._find_block(lines, brace_idx)
             else:
-                j = idx + 1
+                j = base_idx + 1   # ✅ 헤더 끝 다음 줄이 body 시작
                 while j < end_idx and not lines[j].strip():
                     j += 1
                 body_start, body_end, after_idx = j, j + 1, j + 1
