@@ -1753,7 +1753,25 @@ class StructuredFlowEmitter:
             j += 1
 
         header_end = j if j < end_idx else idx
-        loop_line = " ".join([x.strip() for x in header_lines])  # ✅ 헤더 통합본
+        # ✅ 헤더 통합본 (줄 경계에서 "((" 같은 토큰이 깨지지 않게 smart-join)
+        loop_line = ""
+        for t in [x.strip() for x in header_lines]:
+            if not t:
+                continue
+            if not loop_line:
+                loop_line = t
+                continue
+
+            # "((" / "&&" / "||" 처럼 줄 경계에서 쪼개지면 안 되는 토큰 보호
+            if loop_line.endswith("(") and t.startswith("("):
+                loop_line += t
+            elif loop_line.endswith("&") and t.startswith("&"):
+                loop_line += t
+            elif loop_line.endswith("|") and t.startswith("|"):
+                loop_line += t
+            else:
+                loop_line += " " + t
+        
         loop_label_full = self._clean_label(loop_line)
 
         # ---------- for 문 처리 ----------
