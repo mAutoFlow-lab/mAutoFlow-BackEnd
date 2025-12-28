@@ -1761,14 +1761,31 @@ class StructuredFlowEmitter:
                 saw_paren = True
             paren_balance += line.count("(") - line.count(")")
 
-            # ✅ 괄호가 닫혀도, 줄 끝이 '&&' 같은 dangling operator면 다음 줄을 헤더에 포함해야 함
+            # ✅ 괄호가 닫히는 시점이라도 "다음 줄이 조건 계속"이면 헤더에 포함해야 함
             if saw_paren and paren_balance <= 0:
+                # 1) 현재 줄이 dangling operator로 끝나면 무조건 계속
                 if _ends_with_dangling_op(line.strip()):
                     j += 1
                     continue
+
+                # 2) 다음 "유효" 줄이 연산자/괄호로 시작하면(조건 continuation) 헤더 계속
+                k = j + 1
+                while k < end_idx and not lines[k].strip():
+                    k += 1
+                if k < end_idx:
+                    nxt = lines[k].lstrip()
+                    if (
+                        nxt.startswith("&&") or nxt.startswith("||") or
+                        nxt.startswith("&")  or nxt.startswith("|")  or
+                        nxt.startswith("(")
+                    ):
+                        j += 1
+                        continue
+
                 break
 
             j += 1
+
 
         header_end = j if j < end_idx else idx
         
