@@ -307,7 +307,7 @@ def extract_function_body(code: str, func_name: str, macros: dict | None = None)
     # f-string / format 안 쓰고, 문자열을 이어 붙여서 만든다.
     pattern = re.compile(
         r'^\s*'
-        r'(?:(?:static|STATIC|inline|extern|register)\s+|(?:[A-Z_][A-Z0-9_]*\s+))*'    # ✅ FUNC 앞에 붙는 매크로 토큰(예: LOCAL_INLINE, INLINE, FUNC용 memclass 매크로 등)도 허용
+        r'(?:(?!(?:' + re.escape(func_name) + r')\b)[A-Za-z_]\w*(?:\s*\([^{};]*\))?\s+)*'    # ✅ FUNC 앞에 올 수 있는 토큰/매크로를 범용적으로 허용
         r'(?:FUNC\s*\((?:[^()]|\([^()]*\))*\)\s*)?'   # ✅ 중첩 괄호 허용
         r'(?:[A-Za-z_][\w\s\*]*\s+)?'                 # 반환형/수식어 (옵션)
         + re.escape(func_name) +
@@ -378,7 +378,7 @@ def extract_function_names(code: str):
     func_pattern = re.compile(
         r"""
         ^\s*
-        (?:(?:static|STATIC|inline|extern|register)\s+|(?:[A-Z_][A-Z0-9_]*\s+))*  # FUNC 앞 매크로 토큰 허용
+        (?:(?:[A-Za-z_]\w*(?:\s*\([^{};]*\))?\s+))*?         # ✅ FUNC 앞 범용 토큰/매크로허용 (비탐욕)
         (?:FUNC\s*\((?:[^()]|\([^()]*\))*\)\s*)?       # ✅ 중첩 괄호 허용
         (?:[A-Za-z_][\w\s\*]*\s+)?                     # 일반 반환형/수식어 (옵션)
         ([A-Za-z_]\w*)                                 # 함수 이름
