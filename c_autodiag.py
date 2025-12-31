@@ -345,12 +345,15 @@ def extract_function_body(code: str, func_name: str, macros: dict | None = None)
     # ----------------------------
     # (B) 2차: 전처리(#if/#else/#endif) 적용 후 다시 매칭
     # ----------------------------
-    macros = macros or {}
-
+    
     tail = code_nc[start_brace:]              # '{'부터 끝까지
     tail_lines = tail.splitlines()
     tail_lines = splice_backslash_lines(tail_lines)
-    tail_lines = mini_preprocess_lines(tail_lines, macros)
+
+    # ✅ All 모드(macros is None)에서는 전처리 라인을 "삭제"하면 안 됨
+    if macros is not None:
+        macros = macros or {}
+        tail_lines = mini_preprocess_lines(tail_lines, macros)
 
     tail_pp = "\n".join(tail_lines)
     # 전처리 후에도 첫 글자가 '{'가 아닐 수 있으니 안전하게 찾기
@@ -2486,7 +2489,9 @@ def generate_flowchart_from_file(path: str, func_name: str, branch_shape: str = 
 
     code = p.read_text(encoding="utf-8", errors="ignore")
     func_name_clean = sanitize_func_name(func_name)   # ✅ 추가
-    body = extract_function_body(code, func_name_clean, macros=macros or {})
+
+    # ✅ body 추출은 "All이면 macros=None" 그대로 전달
+    body = extract_function_body(code, func_name_clean, macros=macros)
 
     emitter = StructuredFlowEmitter(
         func_name_clean,
