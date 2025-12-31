@@ -345,15 +345,12 @@ def extract_function_body(code: str, func_name: str, macros: dict | None = None)
     # ----------------------------
     # (B) 2차: 전처리(#if/#else/#endif) 적용 후 다시 매칭
     # ----------------------------
-    
+    macros = macros or {}
+
     tail = code_nc[start_brace:]              # '{'부터 끝까지
     tail_lines = tail.splitlines()
     tail_lines = splice_backslash_lines(tail_lines)
-
-    # ✅ All 모드(macros is None)에서는 전처리 라인을 "삭제"하면 안 됨
-    if macros is not None:
-        macros = macros or {}
-        tail_lines = mini_preprocess_lines(tail_lines, macros)
+    tail_lines = mini_preprocess_lines(tail_lines, macros)
 
     tail_pp = "\n".join(tail_lines)
     # 전처리 후에도 첫 글자가 '{'가 아닐 수 있으니 안전하게 찾기
@@ -2340,27 +2337,6 @@ class StructuredFlowEmitter:
             merge = self.nid()
             self.add(f'{merge}(["after switch"]):::merge')
 
-            # (추가) switch 내부 최상위 전처리기 라인을 별도 노드로 표시
-            #  - case body에 끼어들어 break 이후 라인이 스킵되는 문제를 회피하기 위해,
-            #    switch body 전체에서 전처리기 라인을 한 번 더 "표시용"으로 노드화한다.
-            pp_nodes = []
-            for j in range(body_start, body_end):
-                s = lines[j].strip()
-                if s.startswith("#"):
-                    pid = self.nid()
-                    label = s.replace('"', r'\"')
-                    self.add(f'{pid}(["{label}"]):::pre')
-                    pp_nodes.append(pid)
-
-            # switch -> (전처리기들) -> after switch 로 얇은 체인 연결
-            # (case 흐름은 기존대로 유지, 표시만 보장)
-            if pp_nodes:
-                prev = sw_id
-                for pid in pp_nodes:
-                    self.add(f"{prev} --> {pid}")
-                    prev = pid
-                self.add(f"{prev} --> {merge}")
-
             # 각 case/header 라인에 대한 노드 먼저 생성
             case_nodes = {}
             for h in header_idxs:
@@ -2510,9 +2486,7 @@ def generate_flowchart_from_file(path: str, func_name: str, branch_shape: str = 
 
     code = p.read_text(encoding="utf-8", errors="ignore")
     func_name_clean = sanitize_func_name(func_name)   # ✅ 추가
-
-    # ✅ body 추출은 "All이면 macros=None" 그대로 전달
-    body = extract_function_body(code, func_name_clean, macros=macros)
+    body = extract_function_body(code, func_name_clean, macros=macros or {})
 
     emitter = StructuredFlowEmitter(
         func_name_clean,
