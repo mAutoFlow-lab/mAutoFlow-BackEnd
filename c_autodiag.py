@@ -898,7 +898,8 @@ class StructuredFlowEmitter:
     def _classify_simple(self, line: str) -> str:
         """단순 라인에 대해서만 terminator / action 구분"""
         s = line.strip().lower()
-        if s.startswith("return"):
+        # returnCode, return_value 같은 식별자 오인 방지: 'return' 단어만 인정
+        if re.match(r"^return\b", s):
             return "terminator"
         return "action"
 
@@ -2363,7 +2364,7 @@ class StructuredFlowEmitter:
                     has_stop = False
                     for k in range(prev_h + 1, next_h):
                         s = lines[k].strip()
-                        if s.startswith(("break", "return", "goto")):
+                        if re.match(r"^(break|return|goto)\b", s):
                             has_stop = True
                             break
 
