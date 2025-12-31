@@ -2340,6 +2340,27 @@ class StructuredFlowEmitter:
             merge = self.nid()
             self.add(f'{merge}(["after switch"]):::merge')
 
+            # (추가) switch 내부 최상위 전처리기 라인을 별도 노드로 표시
+            #  - case body에 끼어들어 break 이후 라인이 스킵되는 문제를 회피하기 위해,
+            #    switch body 전체에서 전처리기 라인을 한 번 더 "표시용"으로 노드화한다.
+            pp_nodes = []
+            for j in range(body_start, body_end):
+                s = lines[j].strip()
+                if s.startswith("#"):
+                    pid = self.nid()
+                    label = s.replace('"', r'\"')
+                    self.add(f'{pid}(["{label}"]):::pre')
+                    pp_nodes.append(pid)
+
+            # switch -> (전처리기들) -> after switch 로 얇은 체인 연결
+            # (case 흐름은 기존대로 유지, 표시만 보장)
+            if pp_nodes:
+                prev = sw_id
+                for pid in pp_nodes:
+                    self.add(f"{prev} --> {pid}")
+                    prev = pid
+                self.add(f"{prev} --> {merge}")
+
             # 각 case/header 라인에 대한 노드 먼저 생성
             case_nodes = {}
             for h in header_idxs:
