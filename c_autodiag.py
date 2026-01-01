@@ -1510,7 +1510,7 @@ class StructuredFlowEmitter:
                 # return → end 노드 연결
                 if self.end_node:
                     self.add(f"{nid} --> {self.end_node}")
-                    cur_prev = self.end_node
+                    cur_prev = None
                 else:
                     cur_prev = nid
 
