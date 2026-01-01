@@ -2456,7 +2456,7 @@ class StructuredFlowEmitter:
                         if not s:
                             k -= 1
                             continue
-                        if s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
+                        if s.startswith(("#if", "#elif", "#else", "#ifdef", "#ifndef")):
                             new_end = k
                             k -= 1
                             continue
