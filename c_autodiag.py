@@ -1371,7 +1371,7 @@ class StructuredFlowEmitter:
                     # top-level 에서는 이후 코드를 계속 스캔하지만
                     # 제어 흐름은 여기서 끊긴 것으로 보고(#/라벨만 표시) dead_flow로 전환
                     cur_prev = nid   # 그래프가 분리되지 않게(레이아웃 분리 방지)
-                    dead_flow = True
+                    # dead_flow = True
                     continue
 
             # ---- break / continue 특별 처리 ----
@@ -2440,6 +2440,25 @@ class StructuredFlowEmitter:
                 case_body_start = main_header + 1
                 case_body_end = idx_to_next[main_header]
 
+                # [ADD] 다음 case 직전에 붙은 전처리기(#if/#endif...)는 "다음 case 앞"에서 이미 따로 표시하므로
+                #       현재 case body에서는 중복 생성되지 않게 잘라낸다.
+                def _trim_trailing_pp(start, end):
+                    k = end - 1
+                    new_end = end
+                    while k >= start:
+                        s = lines[k].strip()
+                        if not s:
+                            k -= 1
+                            continue
+                        if s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
+                            new_end = k
+                            k -= 1
+                            continue
+                        break
+                    return new_end
+
+                case_body_end = _trim_trailing_pp(case_body_start, case_body_end)
+
                 # 앞쪽 공백 / { / } 제거
                 while case_body_start < case_body_end:
                     s = lines[case_body_start].strip()
@@ -2478,6 +2497,9 @@ class StructuredFlowEmitter:
 
                     sub_start = h + 1
                     sub_end = next_h
+
+                    # [ADD] 다음 case 직전 전처리기 중복 방지
+                    sub_end = _trim_trailing_pp(sub_start, sub_end)
 
                     # 공백 / { / }만 앞에서 제거
                     while sub_start < sub_end:
