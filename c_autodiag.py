@@ -1507,12 +1507,12 @@ class StructuredFlowEmitter:
                 elif cur_prev is not None:
                     self.add(f"{cur_prev} --> {nid}")
                     
-                # return → end 노드 연결
+                # 변경 (return → end 연결은 유지 + cur_prev는 return 노드(nid)로 유지)
                 if self.end_node:
                     self.add(f"{nid} --> {self.end_node}")
-                    cur_prev = None
-                else:
-                    cur_prev = nid
+
+                # ✅ 핵심: dead_flow에서도 #endif 같은 전처리기가 "return 뒤에" 자연스럽게 이어지도록
+                cur_prev = nid
 
                 any_node_created = True
                 i = next_i
