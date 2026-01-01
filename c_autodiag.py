@@ -1291,6 +1291,10 @@ class StructuredFlowEmitter:
                 self._register_entry(entry_holder, nid)   # [NEW]
                 self.label_nodes[m_label.group(1)] = nid  # [NEW]
 
+                # [ADD] goto/break/return 이후 dead_flow 상태라도,
+                #       라벨을 만나면 다시 "정상 파싱"으로 복귀 (라벨 아래 본문 표시)
+                dead_flow = False
+
                 cur_prev = nid
                 any_node_created = True
                 i = next_i
@@ -1366,8 +1370,8 @@ class StructuredFlowEmitter:
                 else:
                     # top-level 에서는 이후 코드를 계속 스캔하지만
                     # 제어 흐름은 여기서 끊긴 것으로 보고(#/라벨만 표시) dead_flow로 전환
-                    dead_flow = True
                     cur_prev = nid   # 그래프가 분리되지 않게(레이아웃 분리 방지)
+                    dead_flow = True
                     continue
 
             # ---- break / continue 특별 처리 ----
@@ -2359,14 +2363,37 @@ class StructuredFlowEmitter:
 
             # 각 case/header 라인에 대한 노드 먼저 생성
             case_nodes = {}
+            prev_boundary = idx + 1  # switch 헤더 다음부터 시작(필요시 brace 처리 보정 가능)
+
             for h in header_idxs:
                 case_header_line = lines[h]
                 case_id = self.nid()
                 case_label = self._clean_label(case_header_line.strip())
                 self.add(f'{case_id}["{case_label}"]')
                 self._bind_node_line(case_id, h)
-                self.add(f"{sw_id} --> {case_id}")
+
+                # [ADD] prev_boundary ~ h 구간의 전처리기를 "다음 case 앞"으로 붙인다
+                pp_ids = []
+                for k in range(prev_boundary, h):
+                    s = lines[k].strip()
+                    if s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
+                        pid = self.nid()
+                        self.add(f'{pid}["{self._clean_label(s)}"]:::preprocess')
+                        self._bind_node_line(pid, k)
+                        pp_ids.append(pid)
+
+                # switch -> (pp chain) -> case
+                if pp_ids:
+                    self.add(f"{sw_id} --> {pp_ids[0]}")
+                    for a, b in zip(pp_ids, pp_ids[1:]):
+                        self.add(f"{a} --> {b}")
+                    self.add(f"{pp_ids[-1]} --> {case_id}")
+                else:
+                    self.add(f"{sw_id} --> {case_id}")
+
                 case_nodes[h] = case_id
+                prev_boundary = h + 1  # 다음 header 앞 구간 시작
+
 
             # ----- fall-through 그룹 계산 (break/return/goto 기준) -----
             groups = []
