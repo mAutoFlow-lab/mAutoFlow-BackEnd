@@ -2394,7 +2394,7 @@ class StructuredFlowEmitter:
                         continue
 
                     # 연속된 전처리기만 수집
-                    if s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
+                    if s.startswith(("#if", "#elif", "#else", "#ifdef", "#ifndef")):
                         pp_lines.append((k, s))
                         k -= 1
                         continue
