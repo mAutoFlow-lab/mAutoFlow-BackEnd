@@ -2379,15 +2379,36 @@ class StructuredFlowEmitter:
                 self.add(f'{case_id}["{case_label}"]')
                 self._bind_node_line(case_id, h)
 
-                # [ADD] prev_boundary ~ h 구간의 전처리기를 "다음 case 앞"으로 붙인다
+                # [FIX] "다음 case 앞" 전처리기는, case 헤더 바로 직전에 붙은(연속된) 것만 끌어올린다.
+                #       (이렇게 해야 case 내부의 #if/#endif가 밖으로 중복 표기되지 않음)
                 pp_ids = []
-                for k in range(prev_boundary, h):
+                k = h - 1
+                pp_lines = []  # (line_idx, stripped_text)
+
+                while k >= prev_boundary:
                     s = lines[k].strip()
-                    if s.startswith(("#if", "#elif", "#else", "#ifdef", "#ifndef")):
-                        pid = self.nid()
-                        self.add(f'{pid}["{self._clean_label(s)}"]:::preprocess')
-                        self._bind_node_line(pid, k)
-                        pp_ids.append(pid)
+
+                    # case 헤더 직전의 빈 줄은 허용(계속 위로 탐색)
+                    if not s:
+                        k -= 1
+                        continue
+
+                    # 연속된 전처리기만 수집
+                    if s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
+                        pp_lines.append((k, s))
+                        k -= 1
+                        continue
+
+                    # 전처리기가 아닌 코드(예: break;, 함수호출 등)를 만나면 중단
+                    break
+
+                # 원래 소스 순서 유지(위에서 아래로 보이도록 reverse)
+                for line_idx, s in reversed(pp_lines):
+                    pid = self.nid()
+                    self.add(f'{pid}["{self._clean_label(s)}"]:::preprocess')
+                    self._bind_node_line(pid, line_idx)
+                    pp_ids.append(pid)
+
 
                 # switch -> (pp chain) -> case
                 if pp_ids:
