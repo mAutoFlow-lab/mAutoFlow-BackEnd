@@ -1012,6 +1012,7 @@ class StructuredFlowEmitter:
         cur_prev = prev_node          # 진행 중인 마지막 노드
         first_label = first_edge_label
         any_node_created = False
+        pp_if_stack = []  # stack of dicts: {"if_nid": str}
 
         # [ADD] break/return/goto/continue 이후: 실행 흐름은 끊되, #전처리기/라벨만 표시를 살리기
         dead_flow = False
@@ -1264,17 +1265,57 @@ class StructuredFlowEmitter:
             # ---- 전처리기 (#if / #elif / #else / #endif / #ifdef / #ifndef) ----
             if stripped.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
                 nid = self.nid()
-                self._bind_node_line(nid, start_line)   # ✅ 하이라이트는 첫 줄 기준
+                self._bind_node_line(nid, start_line)
                 label = self._clean_label(stripped)
                 self.add(f'{nid}["{label}"]:::preprocess')
 
+                directive = stripped.lstrip()
+                is_if = directive.startswith(("#if", "#ifdef", "#ifndef"))
+                is_else = directive.startswith("#else")
+                is_elif = directive.startswith("#elif")
+                is_endif = directive.startswith("#endif")
+
+                # ✅ 1) #if 계열: 현재 흐름에서 연결하고, 스택에 push
+                if is_if:
+                    if first_label and cur_prev is not None:
+                        self.add(f"{cur_prev} -->|{first_label}| {nid}")
+                        first_label = None
+                    elif cur_prev is not None:
+                        self.add(f"{cur_prev} --> {nid}")
+
+                    pp_if_stack.append({"if_nid": nid})
+                    cur_prev = nid
+                    self._register_entry(entry_holder, nid)
+                    any_node_created = True
+                    i = next_i
+                    continue
+
+                # ✅ 2) #else / #elif: “직전 #if”의 False 분기로 연결 (end 뒤로 붙지 않게!)
+                if (is_else or is_elif) and pp_if_stack:
+                    if_nid = pp_if_stack[-1]["if_nid"]
+                    # False 라벨은 원하면 제거 가능
+                    self.add(f'{if_nid} -->|False| {nid}')
+                    # else/elif 이후는 “새 분기”이므로 dead_flow 해제
+                    dead_flow = False
+
+                    cur_prev = nid
+                    self._register_entry(entry_holder, nid)
+                    any_node_created = True
+                    i = next_i
+                    continue
+
+                # ✅ 3) #endif: 스택 pop (분기 닫힘)
+                if is_endif and pp_if_stack:
+                    pp_if_stack.pop()
+
+                # ✅ 4) 나머지는 기존처럼 직렬 연결
                 if first_label and cur_prev is not None:
                     self.add(f"{cur_prev} -->|{first_label}| {nid}")
                     first_label = None
                 elif cur_prev is not None:
                     self.add(f"{cur_prev} --> {nid}")
+
                 self._register_entry(entry_holder, nid)
-                
                 cur_prev = nid
                 any_node_created = True
                 i = next_i
