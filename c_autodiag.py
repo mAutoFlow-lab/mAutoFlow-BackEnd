@@ -955,6 +955,7 @@ class StructuredFlowEmitter:
 
         # start 노드 (한 번만 추가, 공백 없이)
         start = self.nid()
+        self.start_node = start   # [ADD] top-level goto 이후 라벨을 start에 점선으로 붙이기 위함
         self.add(f'{start}(["start {self.func_name}()"]):::term')
 
         # main이 아닐 때만 end 노드 추가
@@ -1249,7 +1250,7 @@ class StructuredFlowEmitter:
             #       전처리기/라벨만 계속 표시한다.
             if dead_flow:
                 s = stripped
-                is_pp = s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef"))
+                is_pp = s.startswith(("#if", "#elif", "#else", "#ifdef", "#ifndef"))
                 is_label = re.match(r"^\s*[A-Za-z_]\w*\s*:\s*$", raw) is not None
                 if not (is_pp or is_label):
                     i = next_i
@@ -1287,6 +1288,10 @@ class StructuredFlowEmitter:
                     first_label = None
                 elif cur_prev is not None:
                     self.add(f"{cur_prev} --> {nid}")
+                elif cur_prev is None and getattr(self, "start_node", None) is not None:
+                    # [ADD] top-level goto로 흐름이 끊긴 상태에서 첫 라벨이 나오면
+                    # 그래프 분리 방지용으로 start에서 점선 연결만 추가
+                    self.add(f"{self.start_node} -.-> {nid}")
                     
                 self._register_entry(entry_holder, nid)   # [NEW]
                 self.label_nodes[m_label.group(1)] = nid  # [NEW]
@@ -1368,10 +1373,11 @@ class StructuredFlowEmitter:
                     cur_prev = nid
                     break
                 else:
-                    # top-level 에서는 이후 코드를 계속 스캔하지만
-                    # 제어 흐름은 여기서 끊긴 것으로 보고(#/라벨만 표시) dead_flow로 전환
-                    cur_prev = nid   # 그래프가 분리되지 않게(레이아웃 분리 방지)
-                    # dead_flow = True
+                    # top-level 에서는 이후 코드를 계속 스캔하지만,
+                    # "순차 실행 흐름"은 여기서 끊는다.
+                    # (그래야 다음 라벨로 잘못 순차 연결되지 않음)
+                    cur_prev = None
+                    dead_flow = True
                     continue
 
             # ---- break / continue 특별 처리 ----
@@ -2376,7 +2382,7 @@ class StructuredFlowEmitter:
                 pp_ids = []
                 for k in range(prev_boundary, h):
                     s = lines[k].strip()
-                    if s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
+                    if s.startswith(("#if", "#elif", "#else", "#ifdef", "#ifndef")):
                         pid = self.nid()
                         self.add(f'{pid}["{self._clean_label(s)}"]:::preprocess')
                         self._bind_node_line(pid, k)
