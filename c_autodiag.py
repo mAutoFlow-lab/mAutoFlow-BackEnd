@@ -1012,6 +1012,9 @@ class StructuredFlowEmitter:
         first_label = first_edge_label
         any_node_created = False
 
+        # [ADD] break/return/goto/continue 이후: 실행 흐름은 끊되, #전처리기/라벨만 표시를 살리기
+        dead_flow = False
+
         while i < n:
             start_line = i
             raw = lines[i]
@@ -1242,6 +1245,16 @@ class StructuredFlowEmitter:
 
             lstrip = raw.lstrip()
 
+            # [ADD] dead_flow 상태면, 일반 statement는 무시하고
+            #       전처리기/라벨만 계속 표시한다.
+            if dead_flow:
+                s = stripped
+                is_pp = s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef"))
+                is_label = re.match(r"^\s*[A-Za-z_]\w*\s*:\s*$", raw) is not None
+                if not (is_pp or is_label):
+                    i = next_i
+                    continue
+
             # ---- 전처리기 (#if / #elif / #else / #endif / #ifdef / #ifndef) ----
             if stripped.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
                 nid = self.nid()
@@ -1352,8 +1365,9 @@ class StructuredFlowEmitter:
                     break
                 else:
                     # top-level 에서는 이후 코드를 계속 스캔하지만
-                    # 제어 흐름은 여기서 끊긴 것으로 본다.
-                    cur_prev = None
+                    # 제어 흐름은 여기서 끊긴 것으로 보고(#/라벨만 표시) dead_flow로 전환
+                    dead_flow = True
+                    cur_prev = nid   # 그래프가 분리되지 않게(레이아웃 분리 방지)
                     continue
 
             # ---- break / continue 특별 처리 ----
@@ -1379,8 +1393,10 @@ class StructuredFlowEmitter:
                 cur_prev = nid
                 any_node_created = True
                 i = next_i
-                # break 이후 이 블록에서는 더 내려가지 않으므로 종료
-                break
+                # break 이후 실행 흐름은 끊되, #전처리기/라벨은 표시를 살린다.
+                dead_flow = True
+                i = next_i
+                continue
 
             if s_lower.startswith("continue"):
                 nid = self.nid()
@@ -1401,8 +1417,10 @@ class StructuredFlowEmitter:
                 cur_prev = nid
                 any_node_created = True
                 i = next_i
-                # continue 이후 아래 코드는 실행되지 않으므로 종료
-                break
+                # continue 이후 실행 흐름은 끊되, #전처리기/라벨은 표시를 살린다.
+                dead_flow = True
+                i = next_i
+                continue
 
 
             # [NEW] 최종 안전장치: 현재 raw가 연산자로 끝났으면 다음 유효 라인 1개를 강제로 붙인다.
@@ -1446,8 +1464,10 @@ class StructuredFlowEmitter:
 
                 any_node_created = True
                 i = next_i
-                # return 이후 이 블록에서 더 이상 실행 경로가 없으므로 종료
-                break
+                # return 이후 실행 흐름은 끊되, #전처리기/라벨은 표시를 살린다.
+                dead_flow = True
+                i = next_i
+                continue
 
             else:
                 # 일반 statement
