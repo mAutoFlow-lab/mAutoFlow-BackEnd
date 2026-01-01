@@ -1293,10 +1293,6 @@ class StructuredFlowEmitter:
                     first_label = None
                 elif cur_prev is not None:
                     self.add(f"{cur_prev} --> {nid}")
-                elif cur_prev is None and getattr(self, "start_node", None) is not None:
-                    # [ADD] top-level goto로 흐름이 끊긴 상태에서 첫 라벨이 나오면
-                    # 그래프 분리 방지용으로 start에서 점선 연결만 추가
-                    self.add(f"{self.start_node} -.-> {nid}")
                     
                 self._register_entry(entry_holder, nid)   # [NEW]
                 self.label_nodes[m_label.group(1)] = nid  # [NEW]
