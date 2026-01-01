@@ -1092,7 +1092,12 @@ class StructuredFlowEmitter:
             stripped0 = raw.strip()
             is_preproc = stripped0.startswith("#")
             is_ctrl = re.match(r"^\s*(if|for|while|switch)\b", raw) is not None
-            if (not is_preproc) and (not is_ctrl):
+
+            # ✅ 추가: "현재 줄 자체"가 라벨/케이스면 다음 줄과 결합 금지
+            is_label_line = re.match(r"^[A-Za-z_]\w*\s*:\s*$", stripped0) is not None
+            is_case_line  = re.match(r"^(case\b|default\s*:)", stripped0) is not None
+            
+            if (not is_preproc) and (not is_ctrl) and (not is_label_line) and (not is_case_line):
                 k = next_i
                 while k < n and not raw.strip().endswith(";"):
                     nxt_raw = lines[k]
@@ -1250,7 +1255,7 @@ class StructuredFlowEmitter:
             #       전처리기/라벨만 계속 표시한다.
             if dead_flow:
                 s = stripped
-                is_pp = s.startswith(("#if", "#elif", "#else", "#ifdef", "#ifndef"))
+                is_pp = s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef"))
                 is_label = re.match(r"^\s*[A-Za-z_]\w*\s*:\s*$", raw) is not None
                 if not (is_pp or is_label):
                     i = next_i
