@@ -1726,13 +1726,13 @@ class StructuredFlowEmitter:
             if t.startswith("else if"):
                current_prev = false_prev
                current_edge = false_edge  # None 이면 라벨 없이 연결됨
-                i = k
-                continue
+               i = k
+               continue
              
             if t.startswith("else"):
-                has_final_else = True
-                final_else_idx = k
-                break
+               has_final_else = True
+               final_else_idx = k
+               break
 
             # else / else if 둘 다 아니면 if 체인 종료
             after_idx = after_then
