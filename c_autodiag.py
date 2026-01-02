@@ -1265,18 +1265,19 @@ class StructuredFlowEmitter:
 
             # ---- 전처리기 (#if / #elif / #else / #endif / #ifdef / #ifndef) ----
             if stripped.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
-                nid = self.nid()
-                self._bind_node_line(nid, start_line)
-                label = self._clean_label(stripped)
-                self.add(f'{nid}["{label}"]:::preprocess')
-
                 directive = stripped.lstrip()
                 is_if    = directive.startswith(("#if", "#ifdef", "#ifndef"))
                 is_elif  = directive.startswith("#elif")
                 is_else  = directive.startswith("#else")
                 is_endif = directive.startswith("#endif")
 
-                # 1) #if 계열: 현재 흐름에서 연결하고, 스택에 push
+                # 새 directive 노드 생성
+                nid = self.nid()
+                self._bind_node_line(nid, start_line)
+                label = self._clean_label(stripped)
+                self.add(f'{nid}["{label}"]:::preprocess')
+
+                # (A) #if 계열: 외부 흐름에서 들어와서 조건 노드로 연결
                 if is_if:
                     if first_label and cur_prev is not None:
                         self.add(f"{cur_prev} -->|{first_label}| {nid}")
@@ -1284,47 +1285,78 @@ class StructuredFlowEmitter:
                     elif cur_prev is not None:
                         self.add(f"{cur_prev} --> {nid}")
 
-                    # ✅ last_nid는 "현재 체인의 마지막 조건 노드"
-                    pp_if_stack.append({"if_nid": nid, "last_nid": nid})
+                    # 프레임 push
+                    pp_if_stack.append({
+                        "if_nid": nid,
+                        "last_cond": nid,      # 현재 체인의 "조건 노드" (if/elif/else 중 마지막)
+                        "branch_last": None,   # 현재 선택된 블록의 마지막 statement 노드
+                        "exits": [],           # 분기 블록들의 마지막 노드들
+                    })
+
+                    # #if 블록 안 첫 statement는 True로 연결되어야 함
                     cur_prev = nid
+                    first_label = "True"       # ✅ 핵심: #if → True → 첫 statement
+                    dead_flow = False
+
                     self._register_entry(entry_holder, nid)
                     any_node_created = True
                     i = next_i
                     continue
 
-                # 2) #elif / #else : "직전 조건 노드(last_nid)"의 False 로만 연결 (체인화)
+                # (B) #elif / #else: 이전 조건(last_cond)의 False 로만 진입 + 직전 블록 exit 수집
                 if (is_elif or is_else) and pp_if_stack:
                     frame = pp_if_stack[-1]
-                    last_cond = frame["last_nid"]
 
-                    # ✅ 핵심: #if에서 #else로 직접 False를 또 만들지 않는다.
-                    self.add(f'{last_cond} -->|False| {nid}')
+                    # 직전 블록의 마지막 노드를 exits로 수집 (없으면 스킵)
+                    if frame["branch_last"] is not None:
+                        frame["exits"].append(frame["branch_last"])
+                        frame["branch_last"] = None
 
-                    # 체인 갱신: 다음 else/elif는 이 노드의 False에서 이어짐
-                    frame["last_nid"] = nid
+                    # 이전 조건의 False에서만 이 directive로 들어와야 함
+                    self.add(f'{frame["last_cond"]} -->|False| {nid}')
 
-                    dead_flow = False  # else/elif 이후 코드 표시 유지
+                    # 체인 마지막 조건 갱신
+                    frame["last_cond"] = nid
+
+                    # 이 블록 안 첫 statement는 True로 연결
                     cur_prev = nid
+                    first_label = "True"        # ✅ 핵심: #elif/#else → True → 첫 statement
+                    dead_flow = False
+
                     self._register_entry(entry_holder, nid)
                     any_node_created = True
                     i = next_i
                     continue
 
-                # 3) #endif : 체인 마지막 노드에서 직렬 연결하고 pop
+                # (C) #endif: 모든 분기 블록을 여기로 합류시키고, 이후(=return)로 연결
                 if is_endif and pp_if_stack:
                     frame = pp_if_stack.pop()
-                    last_cond = frame["last_nid"]
 
-                    # ✅ endif는 "체인 종료 표시"이므로 마지막 조건 노드에서 이어준다
-                    self.add(f"{last_cond} --> {nid}")
+                    # 현재 블록의 마지막 노드도 exits에 수집
+                    if frame["branch_last"] is not None:
+                        frame["exits"].append(frame["branch_last"])
+                        frame["branch_last"] = None
 
+                    # 마지막 조건의 False(=어느 블록도 선택 안된 경로)는 endif로 연결
+                    # (else가 있으면 사실상 안 타지만, 구조적으로 안전)
+                    self.add(f'{frame["last_cond"]} -->|False| {nid}')
+
+                    # 각 블록의 exit들을 endif로 합류
+                    for ex in frame["exits"]:
+                        # exit가 goto/return 등으로 흐름이 끊긴 경우는 제외하고 싶으면 조건 추가 가능
+                        self.add(f"{ex} --> {nid}")
+
+                    # endif 이후부터는 일반 순차 흐름
                     cur_prev = nid
+                    first_label = None
+                    dead_flow = False
+
                     self._register_entry(entry_holder, nid)
                     any_node_created = True
                     i = next_i
                     continue
 
-                # 4) stack 없는 전처리기는 기존처럼 직렬 연결
+                # (D) 스택 밖 전처리기(이상/단독 directive)는 그냥 직렬 연결
                 if first_label and cur_prev is not None:
                     self.add(f"{cur_prev} -->|{first_label}| {nid}")
                     first_label = None
@@ -1336,6 +1368,7 @@ class StructuredFlowEmitter:
                 any_node_created = True
                 i = next_i
                 continue
+
 
 
             # ---- label:  (예: NEGATIVE:) ----
@@ -1523,6 +1556,10 @@ class StructuredFlowEmitter:
                     first_label = None
                 elif cur_prev is not None:
                     self.add(f"{cur_prev} --> {nid}")
+
+                # [ADD - A] 전처리 분기 블록 내부 statement면 branch_last로 기록
+                if pp_if_stack:
+                    pp_if_stack[-1]["branch_last"] = nid
                     
                 # return → end 노드 연결
                 if self.end_node:
@@ -1547,6 +1584,10 @@ class StructuredFlowEmitter:
                     first_label = None
                 elif cur_prev is not None:
                     self.add(f"{cur_prev} --> {nid}")
+
+                # [ADD - B] 전처리 분기 블록 내부 statement면 branch_last로 기록
+                if pp_if_stack:
+                    pp_if_stack[-1]["branch_last"] = nid
                     
                 cur_prev = nid
                 any_node_created = True
