@@ -1281,8 +1281,13 @@ class StructuredFlowEmitter:
                 self.add(f'{nid}["{label}"]:::preprocess')
 
                 if first_label and cur_prev is not None:
-                    self.add(f"{cur_prev} -->|{first_label}| {nid}")
-                    first_label = None
+                    if first_label in ("True", "False"):
+                        # ✅ 전처리기 노드에는 분기 라벨을 붙이지 않는다 (라벨 유지)
+                        self.add(f"{cur_prev} --> {nid}")
+                        # first_label = None  # ❌ 여기서 지우지 않음
+                    else:
+                        self.add(f"{cur_prev} -->|{first_label}| {nid}")
+                        first_label = None
                 elif cur_prev is not None:
                     self.add(f"{cur_prev} --> {nid}")
                 self._register_entry(entry_holder, nid)
