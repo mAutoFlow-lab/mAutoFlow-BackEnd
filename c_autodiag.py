@@ -1341,13 +1341,19 @@ class StructuredFlowEmitter:
                     # (else가 있으면 사실상 안 타지만, 구조적으로 안전)
                     self.add(f'{frame["last_cond"]} -->|False| {nid}')
 
-                    # 각 블록의 exit들을 endif로 합류
-                    for ex in frame["exits"]:
-                        # exit가 goto/return 등으로 흐름이 끊긴 경우는 제외하고 싶으면 조건 추가 가능
-                        self.add(f"{ex} --> {nid}")
+                    # endif 이후에 merge 노드 하나 만들기
+                    merge_nid = self.nid()
+                    self.add(f'{merge_nid}["merge"]:::merge')
 
-                    # endif 이후부터는 일반 순차 흐름
-                    cur_prev = nid
+                    # endif 노드도 merge로 직렬 연결
+                    self.add(f"{nid} --> {merge_nid}")
+
+                    # 각 블록의 exit들을 merge로 합류
+                    for ex in frame["exits"]:
+                        self.add(f"{ex} --> {merge_nid}")
+
+                    # 이후(=return 등)는 merge에서 이어지게
+                    cur_prev = merge_nid
                     first_label = None
                     dead_flow = False
 
