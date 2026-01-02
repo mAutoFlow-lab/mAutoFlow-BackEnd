@@ -1692,24 +1692,43 @@ class StructuredFlowEmitter:
 
             # ----- 다음 토큰: else if / else / nothing -----
             k = after_then
-            while k < end_idx and not lines[k].strip():
-                k += 1
+            false_prev = cond_id
+            false_edge = "False"
+            while k < end_idx:
+                s = lines[k].strip()
+                if not s:
+                    k += 1
+                    continue
 
-            if k >= end_idx:
-                after_idx = after_then
-                has_final_else = False
+                # [NEW] 전처리기 라인은 else/else if 사이에 끼어도 체인을 끊지 않게 한다.
+                if s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
+                    pn = self.nid()
+                    self._bind_node_line(pn, k)  # highlight
+                    label = self._clean_label(s)
+                    self.add(f'{pn}["{label}"]:::preprocess')
+
+                    # False 라벨은 "첫 연결"에만 한 번 붙인다.
+                    if false_edge:
+                        self.add(f"{false_prev} -->|{false_edge}| {pn}")
+                        false_edge = None
+                    else:
+                        self.add(f"{false_prev} --> {pn}")
+
+                    false_prev = pn
+                    k += 1
+                    continue
+
                 break
 
-            t_raw = lines[k].lstrip()
-            t = re.sub(r'^\}\s*', '', t_raw)   # "} else" 형태 보정
-            
+            # 이제 k는 else/else if(또는 다른 토큰)를 가리킨다.
+            t = lines[k].lstrip()
+
             if t.startswith("else if"):
-                # else if → 다시 루프
-                current_prev = cond_id
-                current_edge = "False"
+               current_prev = false_prev
+               current_edge = false_edge  # None 이면 라벨 없이 연결됨
                 i = k
                 continue
-
+             
             if t.startswith("else"):
                 has_final_else = True
                 final_else_idx = k
