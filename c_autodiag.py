@@ -345,15 +345,12 @@ def extract_function_body(code: str, func_name: str, macros: dict | None = None)
     # ----------------------------
     # (B) 2차: 전처리(#if/#else/#endif) 적용 후 다시 매칭
     # ----------------------------
-    
+    macros = macros or {}
+
     tail = code_nc[start_brace:]              # '{'부터 끝까지
     tail_lines = tail.splitlines()
     tail_lines = splice_backslash_lines(tail_lines)
-
-    # ✅ All 모드(macros is None)에서는 전처리 라인을 "삭제"하면 안 됨
-    if macros is not None:
-        macros = macros or {}
-        tail_lines = mini_preprocess_lines(tail_lines, macros)
+    tail_lines = mini_preprocess_lines(tail_lines, macros)
 
     tail_pp = "\n".join(tail_lines)
     # 전처리 후에도 첫 글자가 '{'가 아닐 수 있으니 안전하게 찾기
@@ -958,6 +955,7 @@ class StructuredFlowEmitter:
 
         # start 노드 (한 번만 추가, 공백 없이)
         start = self.nid()
+        self.start_node = start   # [ADD] top-level goto 이후 라벨을 start에 점선으로 붙이기 위함
         self.add(f'{start}(["start {self.func_name}()"]):::term')
 
         # main이 아닐 때만 end 노드 추가
@@ -1014,6 +1012,9 @@ class StructuredFlowEmitter:
         cur_prev = prev_node          # 진행 중인 마지막 노드
         first_label = first_edge_label
         any_node_created = False
+
+        # [ADD] break/return/goto/continue 이후: 실행 흐름은 끊되, #전처리기/라벨만 표시를 살리기
+        dead_flow = False
 
         while i < n:
             start_line = i
@@ -1091,7 +1092,12 @@ class StructuredFlowEmitter:
             stripped0 = raw.strip()
             is_preproc = stripped0.startswith("#")
             is_ctrl = re.match(r"^\s*(if|for|while|switch)\b", raw) is not None
-            if (not is_preproc) and (not is_ctrl):
+
+            # ✅ 추가: "현재 줄 자체"가 라벨/케이스면 다음 줄과 결합 금지
+            is_label_line = re.match(r"^[A-Za-z_]\w*\s*:\s*$", stripped0) is not None
+            is_case_line  = re.match(r"^(case\b|default\s*:)", stripped0) is not None
+            
+            if (not is_preproc) and (not is_ctrl) and (not is_label_line) and (not is_case_line):
                 k = next_i
                 while k < n and not raw.strip().endswith(";"):
                     nxt_raw = lines[k]
@@ -1245,6 +1251,16 @@ class StructuredFlowEmitter:
 
             lstrip = raw.lstrip()
 
+            # [ADD] dead_flow 상태면, 일반 statement는 무시하고
+            #       전처리기/라벨만 계속 표시한다.
+            if dead_flow:
+                s = stripped
+                is_pp = s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef"))
+                is_label = re.match(r"^\s*[A-Za-z_]\w*\s*:\s*$", raw) is not None
+                if not (is_pp or is_label):
+                    i = next_i
+                    continue
+
             # ---- 전처리기 (#if / #elif / #else / #endif / #ifdef / #ifndef) ----
             if stripped.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
                 nid = self.nid()
@@ -1280,6 +1296,10 @@ class StructuredFlowEmitter:
                     
                 self._register_entry(entry_holder, nid)   # [NEW]
                 self.label_nodes[m_label.group(1)] = nid  # [NEW]
+
+                # [ADD] goto/break/return 이후 dead_flow 상태라도,
+                #       라벨을 만나면 다시 "정상 파싱"으로 복귀 (라벨 아래 본문 표시)
+                dead_flow = False
 
                 cur_prev = nid
                 any_node_created = True
@@ -1354,9 +1374,11 @@ class StructuredFlowEmitter:
                     cur_prev = nid
                     break
                 else:
-                    # top-level 에서는 이후 코드를 계속 스캔하지만
-                    # 제어 흐름은 여기서 끊긴 것으로 본다.
+                    # top-level 에서는 이후 코드를 계속 스캔하지만,
+                    # "순차 실행 흐름"은 여기서 끊는다.
+                    # (그래야 다음 라벨로 잘못 순차 연결되지 않음)
                     cur_prev = None
+                    dead_flow = True
                     continue
 
             # ---- break / continue 특별 처리 ----
@@ -1382,8 +1404,10 @@ class StructuredFlowEmitter:
                 cur_prev = nid
                 any_node_created = True
                 i = next_i
-                # break 이후 이 블록에서는 더 내려가지 않으므로 종료
-                break
+                # break 이후 실행 흐름은 끊되, #전처리기/라벨은 표시를 살린다.
+                dead_flow = True
+                i = next_i
+                continue
 
             if s_lower.startswith("continue"):
                 nid = self.nid()
@@ -1404,8 +1428,10 @@ class StructuredFlowEmitter:
                 cur_prev = nid
                 any_node_created = True
                 i = next_i
-                # continue 이후 아래 코드는 실행되지 않으므로 종료
-                break
+                # continue 이후 실행 흐름은 끊되, #전처리기/라벨은 표시를 살린다.
+                dead_flow = True
+                i = next_i
+                continue
 
 
             # [NEW] 최종 안전장치: 현재 raw가 연산자로 끝났으면 다음 유효 라인 1개를 강제로 붙인다.
@@ -1449,8 +1475,10 @@ class StructuredFlowEmitter:
 
                 any_node_created = True
                 i = next_i
-                # return 이후 이 블록에서 더 이상 실행 경로가 없으므로 종료
-                break
+                # return 이후 실행 흐름은 끊되, #전처리기/라벨은 표시를 살린다.
+                dead_flow = True
+                i = next_i
+                continue
 
             else:
                 # 일반 statement
@@ -2342,14 +2370,58 @@ class StructuredFlowEmitter:
 
             # 각 case/header 라인에 대한 노드 먼저 생성
             case_nodes = {}
+            prev_boundary = idx + 1  # switch 헤더 다음부터 시작(필요시 brace 처리 보정 가능)
+
             for h in header_idxs:
                 case_header_line = lines[h]
                 case_id = self.nid()
                 case_label = self._clean_label(case_header_line.strip())
                 self.add(f'{case_id}["{case_label}"]')
                 self._bind_node_line(case_id, h)
-                self.add(f"{sw_id} --> {case_id}")
+
+                # [FIX] "다음 case 앞" 전처리기는, case 헤더 바로 직전에 붙은(연속된) 것만 끌어올린다.
+                #       (이렇게 해야 case 내부의 #if/#endif가 밖으로 중복 표기되지 않음)
+                pp_ids = []
+                k = h - 1
+                pp_lines = []  # (line_idx, stripped_text)
+
+                while k >= prev_boundary:
+                    s = lines[k].strip()
+
+                    # case 헤더 직전의 빈 줄은 허용(계속 위로 탐색)
+                    if not s:
+                        k -= 1
+                        continue
+
+                    # 연속된 전처리기만 수집
+                    if s.startswith(("#if", "#elif", "#else", "#ifdef", "#ifndef")):
+                        pp_lines.append((k, s))
+                        k -= 1
+                        continue
+
+                    # 전처리기가 아닌 코드(예: break;, 함수호출 등)를 만나면 중단
+                    break
+
+                # 원래 소스 순서 유지(위에서 아래로 보이도록 reverse)
+                for line_idx, s in reversed(pp_lines):
+                    pid = self.nid()
+                    self.add(f'{pid}["{self._clean_label(s)}"]:::preprocess')
+                    self._bind_node_line(pid, line_idx)
+                    pp_ids.append(pid)
+
+
+                # switch -> (pp chain) -> case
+                if pp_ids:
+                    self.add(f"{sw_id} --> {pp_ids[0]}")
+                    for a, b in zip(pp_ids, pp_ids[1:]):
+                        self.add(f"{a} --> {b}")
+                    self.add(f"{pp_ids[-1]} --> {case_id}")
+                else:
+                    self.add(f"{sw_id} --> {case_id}")
+
                 case_nodes[h] = case_id
+                prev_boundary = h + 1  # 다음 header 앞 구간 시작
+
 
             # ----- fall-through 그룹 계산 (break/return/goto 기준) -----
             groups = []
@@ -2396,6 +2468,25 @@ class StructuredFlowEmitter:
                 case_body_start = main_header + 1
                 case_body_end = idx_to_next[main_header]
 
+                # [ADD] 다음 case 직전에 붙은 전처리기(#if/#endif...)는 "다음 case 앞"에서 이미 따로 표시하므로
+                #       현재 case body에서는 중복 생성되지 않게 잘라낸다.
+                def _trim_trailing_pp(start, end):
+                    k = end - 1
+                    new_end = end
+                    while k >= start:
+                        s = lines[k].strip()
+                        if not s:
+                            k -= 1
+                            continue
+                        if s.startswith(("#if", "#elif", "#else", "#ifdef", "#ifndef")):
+                            new_end = k
+                            k -= 1
+                            continue
+                        break
+                    return new_end
+
+                case_body_end = _trim_trailing_pp(case_body_start, case_body_end)
+
                 # 앞쪽 공백 / { / } 제거
                 while case_body_start < case_body_end:
                     s = lines[case_body_start].strip()
@@ -2434,6 +2525,9 @@ class StructuredFlowEmitter:
 
                     sub_start = h + 1
                     sub_end = next_h
+
+                    # [ADD] 다음 case 직전 전처리기 중복 방지
+                    sub_end = _trim_trailing_pp(sub_start, sub_end)
 
                     # 공백 / { / }만 앞에서 제거
                     while sub_start < sub_end:
@@ -2489,9 +2583,7 @@ def generate_flowchart_from_file(path: str, func_name: str, branch_shape: str = 
 
     code = p.read_text(encoding="utf-8", errors="ignore")
     func_name_clean = sanitize_func_name(func_name)   # ✅ 추가
-
-    # ✅ body 추출은 "All이면 macros=None" 그대로 전달
-    body = extract_function_body(code, func_name_clean, macros=macros)
+    body = extract_function_body(code, func_name_clean, macros=macros or {})
 
     emitter = StructuredFlowEmitter(
         func_name_clean,
