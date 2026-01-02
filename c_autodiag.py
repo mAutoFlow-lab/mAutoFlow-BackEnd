@@ -1720,6 +1720,13 @@ class StructuredFlowEmitter:
 
                 break
 
+            # ✅ [FIX] 끝까지 갔으면(else/else if 없음) 체인 종료 처리
+            if k >= end_idx:
+                after_idx = after_then
+                has_final_else = False
+                final_else_idx = None
+                break   # while True 종료 → 아래의 "else 없는 경우" merge 생성 로직으로 감
+
             # 이제 k는 else/else if(또는 다른 토큰)를 가리킨다.
             t = lines[k].lstrip()
 
