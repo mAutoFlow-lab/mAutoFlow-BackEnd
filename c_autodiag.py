@@ -1010,6 +1010,7 @@ class StructuredFlowEmitter:
         i = start_idx
         n = end_idx
         cur_prev = prev_node          # 진행 중인 마지막 노드
+        fall_prev = prev_node   # ✅ 실행 흐름(merge 대상)용 prev
         first_label = first_edge_label
         any_node_created = False
         pp_if_stack = []  # stack of dicts: {"if_nid": str}
@@ -1334,6 +1335,8 @@ class StructuredFlowEmitter:
 
                 self._register_entry(entry_holder, nid)
                 cur_prev = nid
+                if not dead_flow:        # ✅ 실행이 이어지는 구간에서만
+                    fall_prev = cur_prev
                 any_node_created = True
                 i = next_i
                 continue
@@ -1565,9 +1568,9 @@ class StructuredFlowEmitter:
             # if cur_prev is not None:
             #     self.add(f"{cur_prev} -->|{first_label}| {nid}")
             # cur_prev = nid
-            return cur_prev
+            return fall_prev
 
-        return cur_prev
+        return fall_prev
 
     # ---- if / else / else if 처리 ----
     def _handle_if(self, lines, idx, end_idx, prev_node, edge_label, entry_holder):
