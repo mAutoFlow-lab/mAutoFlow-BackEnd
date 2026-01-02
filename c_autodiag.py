@@ -788,6 +788,9 @@ class StructuredFlowEmitter:
 
         # 노드 ID -> 함수 본문 내 라인 인덱스(0-based, body.splitlines() 기준)
         self.node_line_map = {}
+        # ✅ 전처리기 #if/#elif/#else/#endif 스택은
+        # 재귀 파싱(블록 파싱)에서도 공유되어야 한다.
+        self.pp_if_stack = []
 
     def _is_loop_control_node(self, nid: str) -> bool:
         """현재 가장 안쪽 루프에서 break/continue 로 쓰이는 노드인지 확인"""
@@ -968,6 +971,7 @@ class StructuredFlowEmitter:
         self.end_node = end    
 
         # 본문 파싱
+        self.pp_if_stack = []   # ✅ 함수 단위로 초기화
         last = self._parse_sequence(
             raw_lines, 0, len(raw_lines), start, first_edge_label=None, is_top_level=True
         )
@@ -1013,7 +1017,7 @@ class StructuredFlowEmitter:
         cur_prev = prev_node          # 진행 중인 마지막 노드
         first_label = first_edge_label
         any_node_created = False
-        pp_if_stack = []  # stack of dicts: {"if_nid": str, "last_nid": str}
+        pp_if_stack = self.pp_if_stack  # ✅ 재귀 호출 간 공유 스택
 
         # [ADD] break/return/goto/continue 이후: 실행 흐름은 끊되, #전처리기/라벨만 표시를 살리기
         dead_flow = False
