@@ -941,7 +941,19 @@ class StructuredFlowEmitter:
 
         # 미니 전처리기: 매크로가 지정되어 있으면, 먼저 전처리 통과
         if self.macros:
-            raw_lines = mini_preprocess_lines(raw_lines, self.macros)        
+            raw_lines = mini_preprocess_lines(raw_lines, self.macros)
+
+        # ✅ [FIX] "} else" / "} else if" 를 라인 분리해서 파서가 블록 경계를 제대로 잡게 함
+        fixed = []
+        for line in raw_lines:
+            m = re.match(r'^(\s*)\}\s*(else\b.*)$', line)
+            if m:
+                indent, rest = m.group(1), m.group(2)
+                fixed.append(f"{indent}}}")          # then 블록 종료 라인
+                fixed.append(f"{indent}{rest}")      # else 시작 라인
+            else:
+                fixed.append(line)
+        raw_lines = fixed
 
         self.add("flowchart TD")
         self.add("classDef term fill:#eaffea,stroke:#66cc66,stroke-width:1px;")   # start/end 연두색
