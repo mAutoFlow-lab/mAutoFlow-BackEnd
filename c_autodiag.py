@@ -1707,14 +1707,11 @@ class StructuredFlowEmitter:
                     label = self._clean_label(s)
                     self.add(f'{pn}["{label}"]:::preprocess')
 
-                    # False 라벨은 "첫 연결"에만 한 번 붙인다.
-                    if false_edge:
-                        self.add(f"{false_prev} -->|{false_edge}| {pn}")
-                        false_edge = None
-                    else:
-                        self.add(f"{false_prev} --> {pn}")
-
+                    # ✅ 전처리기는 "표시용"이므로 False 라벨을 여기서 소비하지 않는다.
+                    #    (False 라벨은 전처리기 체인 끝에서 실제 분기 목적지로 갈 때 1번만 붙임)
+                    self.add(f"{false_prev} --> {pn}")
                     false_prev = pn
+                    # false_edge는 건드리지 말 것! (여전히 "False" 유지)
                     k += 1
                     continue
 
@@ -1841,7 +1838,10 @@ class StructuredFlowEmitter:
                     and b != self.end_node
                 ):
                     self.add(f"{b} --> {merge}")
-            self.add(f"{last_cond_id} -->|False| {merge}")
+                    
+            # ✅ False 경로가 전처리기 노드를 거쳤으면 false_prev가 tail이다.
+            #    (전처리기 없는 경우엔 false_prev == last_cond_id)
+            self.add(f"{false_prev} -->|False| {merge}")
 
         return merge, after_idx
 
