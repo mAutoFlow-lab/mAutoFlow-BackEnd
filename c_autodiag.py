@@ -975,6 +975,7 @@ class StructuredFlowEmitter:
         # main() 이 아니고, 마지막 노드가 무한루프 노드가 아닐 때만 end 연결
         if (
             end is not None
+            and (last is not None)                           # ✅ 추가: None 방지
             and (last not in self.infinite_loop_nodes)
             and (last != end)
             and (last not in self.goto_nodes)     # [NEW]
@@ -1012,7 +1013,7 @@ class StructuredFlowEmitter:
         cur_prev = prev_node          # 진행 중인 마지막 노드
         first_label = first_edge_label
         any_node_created = False
-        pp_if_stack = []  # stack of dicts: {"if_nid": str}
+        pp_if_stack = []  # stack of dicts: {"if_nid": str, "last_nid": str}
 
         # [ADD] break/return/goto/continue 이후: 실행 흐름은 끊되, #전처리기/라벨만 표시를 살리기
         dead_flow = False
@@ -1270,12 +1271,12 @@ class StructuredFlowEmitter:
                 self.add(f'{nid}["{label}"]:::preprocess')
 
                 directive = stripped.lstrip()
-                is_if = directive.startswith(("#if", "#ifdef", "#ifndef"))
-                is_else = directive.startswith("#else")
-                is_elif = directive.startswith("#elif")
+                is_if    = directive.startswith(("#if", "#ifdef", "#ifndef"))
+                is_elif  = directive.startswith("#elif")
+                is_else  = directive.startswith("#else")
                 is_endif = directive.startswith("#endif")
 
-                # ✅ 1) #if 계열: 현재 흐름에서 연결하고, 스택에 push
+                # 1) #if 계열: 현재 흐름에서 연결하고, 스택에 push
                 if is_if:
                     if first_label and cur_prev is not None:
                         self.add(f"{cur_prev} -->|{first_label}| {nid}")
@@ -1283,32 +1284,47 @@ class StructuredFlowEmitter:
                     elif cur_prev is not None:
                         self.add(f"{cur_prev} --> {nid}")
 
-                    pp_if_stack.append({"if_nid": nid})
+                    # ✅ last_nid는 "현재 체인의 마지막 조건 노드"
+                    pp_if_stack.append({"if_nid": nid, "last_nid": nid})
                     cur_prev = nid
                     self._register_entry(entry_holder, nid)
                     any_node_created = True
                     i = next_i
                     continue
 
-                # ✅ 2) #else / #elif: “직전 #if”의 False 분기로 연결 (end 뒤로 붙지 않게!)
-                if (is_else or is_elif) and pp_if_stack:
-                    if_nid = pp_if_stack[-1]["if_nid"]
-                    # False 라벨은 원하면 제거 가능
-                    self.add(f'{if_nid} -->|False| {nid}')
-                    # else/elif 이후는 “새 분기”이므로 dead_flow 해제
-                    dead_flow = False
+                # 2) #elif / #else : "직전 조건 노드(last_nid)"의 False 로만 연결 (체인화)
+                if (is_elif or is_else) and pp_if_stack:
+                    frame = pp_if_stack[-1]
+                    last_cond = frame["last_nid"]
 
+                    # ✅ 핵심: #if에서 #else로 직접 False를 또 만들지 않는다.
+                    self.add(f'{last_cond} -->|False| {nid}')
+
+                    # 체인 갱신: 다음 else/elif는 이 노드의 False에서 이어짐
+                    frame["last_nid"] = nid
+
+                    dead_flow = False  # else/elif 이후 코드 표시 유지
                     cur_prev = nid
                     self._register_entry(entry_holder, nid)
                     any_node_created = True
                     i = next_i
                     continue
 
-                # ✅ 3) #endif: 스택 pop (분기 닫힘)
+                # 3) #endif : 체인 마지막 노드에서 직렬 연결하고 pop
                 if is_endif and pp_if_stack:
-                    pp_if_stack.pop()
+                    frame = pp_if_stack.pop()
+                    last_cond = frame["last_nid"]
 
-                # ✅ 4) 나머지는 기존처럼 직렬 연결
+                    # ✅ endif는 "체인 종료 표시"이므로 마지막 조건 노드에서 이어준다
+                    self.add(f"{last_cond} --> {nid}")
+
+                    cur_prev = nid
+                    self._register_entry(entry_holder, nid)
+                    any_node_created = True
+                    i = next_i
+                    continue
+
+                # 4) stack 없는 전처리기는 기존처럼 직렬 연결
                 if first_label and cur_prev is not None:
                     self.add(f"{cur_prev} -->|{first_label}| {nid}")
                     first_label = None
@@ -1320,6 +1336,7 @@ class StructuredFlowEmitter:
                 any_node_created = True
                 i = next_i
                 continue
+
 
             # ---- label:  (예: NEGATIVE:) ----
             m_label = re.match(r"\s*([A-Za-z_]\w*)\s*:\s*$", raw)
