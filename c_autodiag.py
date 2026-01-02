@@ -1016,6 +1016,7 @@ class StructuredFlowEmitter:
 
         # [ADD] break/return/goto/continue 이후: 실행 흐름은 끊되, #전처리기/라벨만 표시를 살리기
         dead_flow = False
+        dead_anchor = None  # [NEW] dead_flow일 때, #endif를 "바로 앞 return/break" 뒤에 붙이기 위한 표시용 앵커
 
         while i < n:
             start_line = i
@@ -1274,6 +1275,22 @@ class StructuredFlowEmitter:
                 is_else = directive.startswith("#else")
                 is_elif = directive.startswith("#elif")
                 is_endif = directive.startswith("#endif")
+
+                # [NEW] dead_flow 상태에서는 "#endif"만 "표시용"으로 dead_anchor에 붙인다.
+                # - #else/#elif를 dead_anchor에 붙이면 빨간 X(가면 안 되는 경로)가 생김
+                if dead_flow and is_endif and dead_anchor is not None:
+                    # 분기 닫힘 스택 pop은 유지
+                    if pp_if_stack:
+                        pp_if_stack.pop()
+
+                    # return/break 바로 뒤에 #endif가 붙어 보이도록 표시용 연결만 추가
+                    self.add(f"{dead_anchor} --> {nid}")
+                    dead_anchor = nid  # 연속 #endif가 올 경우도 대비
+
+                    # cur_prev는 건드리지 않는다(흐름 재개 금지)
+                    any_node_created = True
+                    i = next_i
+                    continue
 
                 # ✅ 1) #if 계열: 현재 흐름에서 연결하고, 스택에 push
                 if is_if:
