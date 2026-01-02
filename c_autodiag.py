@@ -1531,6 +1531,9 @@ class StructuredFlowEmitter:
                 if self.end_node:
                     self.add(f"{nid} --> {self.end_node}")
 
+                # ✅ 핵심: 이 분기는 여기서 "실행 흐름 종료"라고 명확히 선언
+                fall_prev = None
+
                 # ✅ 핵심: dead_flow에서도 #endif 같은 전처리기가 "return 뒤에" 자연스럽게 이어지도록
                 cur_prev = nid
 
@@ -1812,6 +1815,8 @@ class StructuredFlowEmitter:
                 # 실질적으로 다음으로 이어지는 분기들만 모음
                 non_terminals = []
                 for b in branches:
+                    if b is None:
+                        continue
                     if (
                         not self._is_loop_control_node(b)
                         and b != self.end_node
