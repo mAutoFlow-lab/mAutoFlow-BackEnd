@@ -1291,6 +1291,7 @@ class StructuredFlowEmitter:
                         "last_cond": nid,      # 현재 체인의 "조건 노드" (if/elif/else 중 마지막)
                         "branch_last": None,   # 현재 선택된 블록의 마지막 statement 노드
                         "exits": [],           # 분기 블록들의 마지막 노드들
+                        "has_else": False,
                     })
 
                     # #if 블록 안 첫 statement는 True로 연결되어야 함
@@ -1306,6 +1307,9 @@ class StructuredFlowEmitter:
                 # (B) #elif / #else: 이전 조건(last_cond)의 False 로만 진입 + 직전 블록 exit 수집
                 if (is_elif or is_else) and pp_if_stack:
                     frame = pp_if_stack[-1]
+
+                    if is_else:
+                        frame["has_else"] = True
 
                     # 직전 블록의 마지막 노드를 exits로 수집 (없으면 스킵)
                     if frame["branch_last"] is not None:
@@ -1337,9 +1341,10 @@ class StructuredFlowEmitter:
                         frame["exits"].append(frame["branch_last"])
                         frame["branch_last"] = None
 
-                    # 마지막 조건의 False(=어느 블록도 선택 안된 경로)는 endif로 연결
-                    # (else가 있으면 사실상 안 타지만, 구조적으로 안전)
-                    self.add(f'{frame["last_cond"]} -->|False| {nid}')
+                    # 마지막 조건의 False 경로는,
+                    # ✅ #else가 "없는 경우에만" endif로 안전 연결
+                    if not frame.get("has_else", False):
+                        self.add(f'{frame["last_cond"]} -->|False| {nid}')
 
                     # endif 이후에 merge 노드 하나 만들기
                     merge_nid = self.nid()
