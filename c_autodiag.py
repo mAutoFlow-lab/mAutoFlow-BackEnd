@@ -1688,7 +1688,9 @@ class StructuredFlowEmitter:
                 has_final_else = False
                 break
 
-            t = lines[k].lstrip()
+            t_raw = lines[k].lstrip()
+            t = re.sub(r'^\}\s*', '', t_raw)   # "} else" 형태 보정
+            
             if t.startswith("else if"):
                 # else if → 다시 루프
                 current_prev = cond_id
