@@ -1010,14 +1010,12 @@ class StructuredFlowEmitter:
         i = start_idx
         n = end_idx
         cur_prev = prev_node          # 진행 중인 마지막 노드
-        fall_prev = prev_node   # ✅ 실행 흐름(merge 대상)용 prev
         first_label = first_edge_label
         any_node_created = False
         pp_if_stack = []  # stack of dicts: {"if_nid": str}
 
         # [ADD] break/return/goto/continue 이후: 실행 흐름은 끊되, #전처리기/라벨만 표시를 살리기
         dead_flow = False
-        dead_anchor = None  # [NEW] dead_flow일 때, #endif를 "바로 앞 return/break" 뒤에 붙이기 위한 표시용 앵커
 
         while i < n:
             start_line = i
@@ -1277,22 +1275,6 @@ class StructuredFlowEmitter:
                 is_elif = directive.startswith("#elif")
                 is_endif = directive.startswith("#endif")
 
-                # [NEW] dead_flow 상태에서는 "#endif"만 "표시용"으로 dead_anchor에 붙인다.
-                # - #else/#elif를 dead_anchor에 붙이면 빨간 X(가면 안 되는 경로)가 생김
-                if dead_flow and is_endif and dead_anchor is not None:
-                    # 분기 닫힘 스택 pop은 유지
-                    if pp_if_stack:
-                        pp_if_stack.pop()
-
-                    # return/break 바로 뒤에 #endif가 붙어 보이도록 표시용 연결만 추가
-                    self.add(f"{dead_anchor} --> {nid}")
-                    dead_anchor = nid  # 연속 #endif가 올 경우도 대비
-
-                    # cur_prev는 건드리지 않는다(흐름 재개 금지)
-                    any_node_created = True
-                    i = next_i
-                    continue
-
                 # ✅ 1) #if 계열: 현재 흐름에서 연결하고, 스택에 push
                 if is_if:
                     if first_label and cur_prev is not None:
@@ -1335,8 +1317,6 @@ class StructuredFlowEmitter:
 
                 self._register_entry(entry_holder, nid)
                 cur_prev = nid
-                if not dead_flow:        # ✅ 실행이 이어지는 구간에서만
-                    fall_prev = cur_prev
                 any_node_created = True
                 i = next_i
                 continue
@@ -1527,15 +1507,12 @@ class StructuredFlowEmitter:
                 elif cur_prev is not None:
                     self.add(f"{cur_prev} --> {nid}")
                     
-                # 변경 (return → end 연결은 유지 + cur_prev는 return 노드(nid)로 유지)
+                # return → end 노드 연결
                 if self.end_node:
                     self.add(f"{nid} --> {self.end_node}")
-
-                # ✅ 핵심: 이 분기는 여기서 "실행 흐름 종료"라고 명확히 선언
-                fall_prev = None
-
-                # ✅ 핵심: dead_flow에서도 #endif 같은 전처리기가 "return 뒤에" 자연스럽게 이어지도록
-                cur_prev = nid
+                    cur_prev = None
+                else:
+                    cur_prev = nid
 
                 any_node_created = True
                 i = next_i
@@ -1571,9 +1548,9 @@ class StructuredFlowEmitter:
             # if cur_prev is not None:
             #     self.add(f"{cur_prev} -->|{first_label}| {nid}")
             # cur_prev = nid
-            return fall_prev
+            return cur_prev
 
-        return fall_prev
+        return cur_prev
 
     # ---- if / else / else if 처리 ----
     def _handle_if(self, lines, idx, end_idx, prev_node, edge_label, entry_holder):
@@ -1815,8 +1792,6 @@ class StructuredFlowEmitter:
                 # 실질적으로 다음으로 이어지는 분기들만 모음
                 non_terminals = []
                 for b in branches:
-                    if b is None:
-                        continue
                     if (
                         not self._is_loop_control_node(b)
                         and b != self.end_node
