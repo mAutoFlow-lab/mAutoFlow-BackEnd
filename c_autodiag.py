@@ -1622,12 +1622,16 @@ class StructuredFlowEmitter:
 
             first_line = lines[header_start]
             stripped_first = first_line.lstrip()
-            is_else_if = stripped_first.startswith("else if")
 
             # 라벨 텍스트 구성
             header_text = " ".join(l.strip() for l in header_lines)
+
+            # else-if 판정은 "else if"의 공백/개행 변형(else  if, else\nif 등)까지 포함해서 처리
+            is_else_if = bool(re.match(r"^else\s+if\b", header_text))
+
+            # Mermaid에는 else-if 전용 문법이 없어서, else-if는 항상 if로 표시 (일관성 유지)
             if is_else_if:
-                header_text = re.sub(r"\belse\s+if\b", "if", header_text, count=1)
+                header_text = re.sub(r"^else\s+if\b", "if", header_text, count=1)
 
             cond_text = self._extract_if_condition(header_text)
             cond_label = self._clean_cond_label(cond_text)
