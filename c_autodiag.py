@@ -1627,7 +1627,7 @@ class StructuredFlowEmitter:
             # 라벨 텍스트 구성
             header_text = " ".join(l.strip() for l in header_lines)
             if is_else_if:
-                header_text = header_text.replace("else if", "if", 1)
+                header_text = re.sub(r"\belse\s+if\b", "if", header_text, count=1)
 
             cond_text = self._extract_if_condition(header_text)
             cond_label = self._clean_cond_label(cond_text)
@@ -1746,7 +1746,7 @@ class StructuredFlowEmitter:
             # 이제 k는 else/else if(또는 다른 토큰)를 가리킨다.
             t = lines[k].lstrip()
 
-            if t.startswith("else if"):
+            if re.match(r"else\s+if\b", t):
                current_prev = false_prev
                current_edge = false_edge  # None 이면 라벨 없이 연결됨
                i = k
