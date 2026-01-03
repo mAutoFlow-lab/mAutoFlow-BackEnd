@@ -902,7 +902,8 @@ class StructuredFlowEmitter:
         if shape == "parallelogram":
             # Mermaid parallelogram: [/text/]
             # label은 이미 _clean_cond_label에서 큰 문제되는 문자를 치환했으니 그대로 사용
-            return f'{node_id}[/{label}/]:::cond'
+            safe = label.replace("\n", " ").replace("/", "／")
+            return f'{node_id}[/"{safe}"/]:::cond'
 
         # default = rounded
         return f'{node_id}("{label}"):::cond'
