@@ -1791,10 +1791,12 @@ class StructuredFlowEmitter:
                     m += 1
                 else_start, else_end, after_else = m, m + 1, m + 1
 
-            # else 블록이 비어 있는지 검사
+            # else 블록이 비어 있는지 검사 (inline else면 else_temp_lines 기준으로 검사)
+            target_lines = else_temp_lines if else_temp_lines is not None else lines
             if else_start is not None and not _block_is_effectively_empty(
-                lines, else_start, else_end
+                target_lines, else_start, else_end
             ):
+                
                 if else_temp_lines is not None:
                     else_exit = self._parse_sequence(
                         else_temp_lines, 0, len(else_temp_lines), last_cond_id, first_edge_label="False"
