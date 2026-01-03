@@ -884,16 +884,29 @@ class StructuredFlowEmitter:
 
     def _make_cond_node(self, node_id: str, label: str) -> str:
         """
-        branch_shape 설정에 따라 조건 노드 모양을 바꾼다.
-        - "rounded" : ( )  → 둥근 사각형 (stadium)
-        - "diamond" : { }  → 마름모
+        branch_shape:
+          - "rounded"       : ( )         rounded
+          - "diamond"       : { }         diamond
+          - "hexagon"       : {{ }}       hexagon
+          - "parallelogram" : [ / / ]     parallelogram
         """
-        if self.branch_shape == "diamond":
-            # 마름모 (decision)
+        shape = (self.branch_shape or "rounded").lower()
+
+        if shape == "diamond":
             return f'{node_id}{{"{label}"}}:::cond'
-        else:
-            # 둥근 사각형
-            return f'{node_id}("{label}"):::cond'   
+
+        if shape == "hexagon":
+            # Mermaid hexagon: {{text}}
+            return f'{node_id}{{{{"{label}"}}}}:::cond'
+
+        if shape == "parallelogram":
+            # Mermaid parallelogram: [/text/]
+            # label은 이미 _clean_cond_label에서 큰 문제되는 문자를 치환했으니 그대로 사용
+            return f'{node_id}[/{label}/]:::cond'
+
+        # default = rounded
+        return f'{node_id}("{label}"):::cond'
+  
 
     def _classify_simple(self, line: str) -> str:
         """단순 라인에 대해서만 terminator / action 구분"""
