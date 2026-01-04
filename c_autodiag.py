@@ -2632,6 +2632,7 @@ class StructuredFlowEmitter:
                     exit_node is not None
                     and not self._is_loop_control_node(exit_node)
                     and exit_node not in self.goto_nodes
+                    and exit_node != self.end_node      # [FIX] return 경로는 merge로 다시 이어주지 않음
                 ):
                     self.add(f"{exit_node} --> {merge}")
 
