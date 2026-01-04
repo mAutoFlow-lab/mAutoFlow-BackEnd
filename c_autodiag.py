@@ -1400,11 +1400,11 @@ class StructuredFlowEmitter:
                 any_node_created = True
                 i = next_i
 
-                if not is_top_level:
+                #if not is_top_level:
                     # 블록 내부에서는 goto 를 '마지막 노드'로 취급하고 종료
-                    cur_prev = nid
-                    break
-                else:
+                #    cur_prev = nid
+                #    break
+                #else:
                     # top-level 에서는 이후 코드를 계속 스캔하지만,
                     # "순차 실행 흐름"은 여기서 끊는다.
                     # (그래야 다음 라벨로 잘못 순차 연결되지 않음)
