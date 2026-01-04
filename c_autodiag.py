@@ -1729,11 +1729,11 @@ class StructuredFlowEmitter:
             # ✅ 실제 then 블록은 prefix_pp 이후 노드(true_prev)에서 이어서 파싱
             if temp_lines is not None:
                 then_exit = self._parse_sequence(
-                    temp_lines, 0, 1, true_prev, first_edge_label=None
+                    temp_lines, 0, 1, true_prev, first_edge_label="True"
                 )
             else:
                 then_exit = self._parse_sequence(
-                    lines, then_start, then_end, true_prev, first_edge_label=None
+                    lines, then_start, then_end, true_prev, first_edge_label="True"
                 )
 
 
