@@ -1408,9 +1408,9 @@ class StructuredFlowEmitter:
                     # top-level 에서는 이후 코드를 계속 스캔하지만,
                     # "순차 실행 흐름"은 여기서 끊는다.
                     # (그래야 다음 라벨로 잘못 순차 연결되지 않음)
-                    cur_prev = None
-                    dead_flow = True
-                    continue
+                cur_prev = None
+                dead_flow = True
+                continue
 
             # ---- break / continue 특별 처리 ----
             if s_lower.startswith("break"):
