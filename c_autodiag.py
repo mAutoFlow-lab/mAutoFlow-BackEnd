@@ -2423,7 +2423,7 @@ class StructuredFlowEmitter:
 
                 # body_start 라인에 '{'가 보통 있으므로, 그 다음부터 depth==1일 때만 case/default를 수집한다.
                 # (nested switch/if/for 등의 내부(case)는 depth>=2로 걸러짐)
-                if depth == 1 and (re.match(r"^\s*case\b", line) or re.match(r"^\s*default\b", line)):
+                if depth == 0 and (re.match(r"^\s*case\b", line) or re.match(r"^\s*default\b", line)):
                     header_idxs.append(i)
 
                 depth += line.count('{') - line.count('}')
