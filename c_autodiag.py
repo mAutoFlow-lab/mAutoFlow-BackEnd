@@ -1649,6 +1649,7 @@ class StructuredFlowEmitter:
 
             # ----- then 블록(True) 위치 파악 -----
             brace_idx = None
+            prefix_pp = []   # ✅ if 헤더 ~ '{' 사이 전처리기 라인 인덱스 모음
 
             # 1) 현재 if/else if 헤더 라인에서 '{' 먼저 검색
             if "{" in lines[header_end]:
@@ -1656,15 +1657,18 @@ class StructuredFlowEmitter:
             else:
                 # 2) 헤더 이후의 첫 non-empty 라인을 찾고, 거기서 '{' 검색
                 j = header_end + 1
+                prefix_pp = []
                 while j < end_idx:
                     t = lines[j].strip()
                     if not t:
                         j += 1
                         continue
-                    if t.startswith("#"):          # ✅ 전처리기 라인 스킵
-                        j += 1
-                        continue
+                    if t.startswith("#"):
+                       prefix_pp.append(j)   # ✅ 표시용으로 살려둘 전처리기 라인
+                       j += 1
+                       continue
                     break
+
                 if j < end_idx and "{" in lines[j]:
                     brace_idx = j
 
@@ -1708,14 +1712,30 @@ class StructuredFlowEmitter:
 
 
             # ----- True 분기 파싱 -----
+            true_prev = cond_id
+            # ✅ if 헤더와 '{' 사이에 있던 전처리기(#endif 등)를 "True 경로"에 표시용으로 먼저 태운다.
+            #    - 전처리기 노드에는 True/False 라벨을 붙이지 않도록 _parse_sequence 내부에서 처리되어 있음
+            #    - 여기서 first_edge_label="True"로 시작하면, 전처리기 노드에는 라벨이 소비되지 않고
+            #      전처리기 뒤 첫 실제 statement로 True 라벨이 1회만 붙는다.
+            if prefix_pp:
+                pp_start = prefix_pp[0]
+                pp_end = prefix_pp[-1] + 1
+                true_prev = self._parse_sequence(
+                    lines, pp_start, pp_end, cond_id, first_edge_label="True"
+                )
+                if true_prev is None:
+                    true_prev = cond_id
+            
+            # ✅ 실제 then 블록은 prefix_pp 이후 노드(true_prev)에서 이어서 파싱
             if temp_lines is not None:
                 then_exit = self._parse_sequence(
-                    temp_lines, 0, 1, cond_id, first_edge_label="True"
+                    temp_lines, 0, 1, true_prev, first_edge_label=None
                 )
             else:
                 then_exit = self._parse_sequence(
-                    lines, then_start, then_end, cond_id, first_edge_label="True"
+                    lines, then_start, then_end, true_prev, first_edge_label=None
                 )
+
 
             if then_exit is not None and then_exit != self.end_node:
                 branches.append(then_exit)
