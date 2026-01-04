@@ -2416,11 +2416,19 @@ class StructuredFlowEmitter:
             # ----- case / default 헤더 라인 인덱스 수집 -----
             header_idxs = []
             i = body_start
+            depth = 0  # switch 바디({ ... }) 안에서의 중괄호 depth 추적
             while i < body_end:
-                line = lines[i]
-                # 앞뒤 공백, 탭 등 무시하고 case/default 인지만 본다
-                if re.match(r"^\s*case\b", line) or re.match(r"^\s*default\b", line):
+                raw = lines[i]
+                line = remove_comments(raw)
+
+                # body_start 라인에 '{'가 보통 있으므로, 그 다음부터 depth==1일 때만 case/default를 수집한다.
+                # (nested switch/if/for 등의 내부(case)는 depth>=2로 걸러짐)
+                if depth == 1 and (re.match(r"^\s*case\b", line) or re.match(r"^\s*default\b", line)):
                     header_idxs.append(i)
+
+                depth += line.count('{') - line.count('}')
+                if depth < 0:  # 방어
+                    depth = 0
                 i += 1
 
             if not header_idxs:
