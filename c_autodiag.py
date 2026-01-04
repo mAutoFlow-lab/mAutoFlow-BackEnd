@@ -1319,11 +1319,14 @@ class StructuredFlowEmitter:
                 label_txt = self._clean_label(raw)
                 self.add(f'{nid}["{label_txt}"]')
 
-                if first_label and cur_prev is not None:
-                    self.add(f"{cur_prev} -->|{first_label}| {nid}")
-                    first_label = None
-                elif cur_prev is not None:
-                    self.add(f"{cur_prev} --> {nid}")
+                # ✅ dead_flow(=break/return/goto 등으로 순차 흐름이 끊긴 상태)에서는
+                #   라벨을 "순차 실행"으로 연결하면 안 됨.
+                if not dead_flow:
+                    if first_label and cur_prev is not None:
+                        self.add(f"{cur_prev} -->|{first_label}| {nid}")
+                        first_label = None
+                    elif cur_prev is not None:
+                        self.add(f"{cur_prev} --> {nid}")
                     
                 self._register_entry(entry_holder, nid)   # [NEW]
                 self.label_nodes[m_label.group(1)] = nid  # [NEW]
