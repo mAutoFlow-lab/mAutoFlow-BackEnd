@@ -1656,8 +1656,15 @@ class StructuredFlowEmitter:
             else:
                 # 2) 헤더 이후의 첫 non-empty 라인을 찾고, 거기서 '{' 검색
                 j = header_end + 1
-                while j < end_idx and not lines[j].strip():
-                    j += 1
+                while j < end_idx:
+                    t = lines[j].strip()
+                    if not t:
+                        j += 1
+                        continue
+                    if t.startswith("#"):          # ✅ 전처리기 라인 스킵
+                        j += 1
+                        continue
+                    break
                 if j < end_idx and "{" in lines[j]:
                     brace_idx = j
 
@@ -1725,6 +1732,8 @@ class StructuredFlowEmitter:
 
                 # [NEW] 전처리기 라인은 else/else if 사이에 끼어도 체인을 끊지 않게 한다.
                 if s.startswith(("#if", "#elif", "#else", "#endif", "#ifdef", "#ifndef")):
+                    if s.startswith("#endif"):
+                        break   # ✅ 바깥 전처리 블록 종료: else-chain 사이 전처리로 취급 금지
                     pn = self.nid()
                     self._bind_node_line(pn, k)  # highlight
                     label = self._clean_label(s)
