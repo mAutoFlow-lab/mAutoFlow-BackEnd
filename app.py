@@ -36,12 +36,10 @@ app = FastAPI()
 
 # ✅ CORS: 프론트 도메인 허용 (export/download 포함)
 ALLOWED_ORIGINS = [
-    "https://mautoflow-frontend.pages.dev",
     "https://mautoflow-frontend-cf.pages.dev",
-    "https://mautoflow-lab.netlify.app",
-    "http://localhost:3000",
-    "http://localhost:8000",
-    "http://localhost:8080",
+        # ✅ 커스텀 도메인 추가 (이거 없으면 mautoflow.com에서 CORS로 막힘)
+    "https://mautoflow.com",
+    "https://www.mautoflow.com",
 ]
 
 app.add_middleware(
