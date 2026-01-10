@@ -197,7 +197,7 @@ async def create_share(
     res = db.table("shared_diagrams").insert({
         "id": share_id,
         "owner_user_id": user_id,
-        "mermaid_code": mermaid_code
+        "mermaid_code": mermaid_code,
         "expires_at": expires_at,
     }).execute()
 
