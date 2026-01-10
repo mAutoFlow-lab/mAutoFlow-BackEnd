@@ -190,10 +190,15 @@ async def create_share(
     # ✅ (수정 3) id 직접 생성해서 넣기 (테이블 default 없어도 안전)
     share_id = str(uuid4())
 
+    # ✅ (추가) expires_at을 반드시 채움 (get_shared_diagram()에서 expires_at > now 조건을 쓰고 있어서 NULL이면 조회가 안 됨)
+    share_ttl_days = int(os.getenv("SHARE_TTL_DAYS", "30"))
+    expires_at = (now + timedelta(days=share_ttl_days)).isoformat()
+
     res = db.table("shared_diagrams").insert({
         "id": share_id,
         "owner_user_id": user_id,
         "mermaid_code": mermaid_code
+        "expires_at": expires_at,
     }).execute()
 
     if not getattr(res, "data", None):
@@ -351,7 +356,19 @@ async def lemon_webhook(request: Request):
     except Exception:
         pass
     
-    subscription_id = attr.get("id")
+    # ✅ subscription_id는 Lemon의 리소스 ID: 보통 body["data"]["id"]
+    subscription_id = data.get("id") or attr.get("id")
+
+    # ✅ 최악 방지: subscription_id가 없으면 업서트/업데이트 절대 하지 않음
+    if not subscription_id:
+        print("[LEMON] Missing subscription_id (data.id). Ignoring event.")
+        return {"ok": True}
+
+    # ✅ 혹시 문자열 "None" 같은 이상값도 차단
+    if str(subscription_id).strip().lower() in ("none", "null", ""):
+        print("[LEMON] Invalid subscription_id value. Ignoring event.")
+        return {"ok": True}
+    
     status = attr.get("status")  # active|on_trial|cancelled|expired ...
     renews_at = attr.get("renews_at")
     ends_at = attr.get("ends_at")
@@ -418,6 +435,10 @@ async def lemon_webhook(request: Request):
         print(f"[LEMON] subscription cancelled: user={user_id}")
 
     elif event_name == "subscription_payment_success":
+        # ✅ 여기 도달 전에 subscription_id 방어가 있으니 안전하지만, 한 번 더 확실히
+        if not subscription_id:
+            return {"ok": True}
+        
         # renewal 성공 → active 유지
         db.table("subscriptions").update({
             "status": "active",
