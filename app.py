@@ -331,8 +331,41 @@ async def lemon_webhook(request: Request):
     Lemon Squeezy → Supabase 구독 동기화
     (현재 구조 + plan_tier/plan_name/variant 연동)
     """
+    # ==========================================================
+    # (추가) Lemon Webhook 서명 검증
+    # - 운영에서 반드시 켜는 걸 권장.
+    # - 시그니처 헤더 키는 Lemon 설정/버전에 따라 다를 수 있어
+    #   아래처럼 여러 후보를 같이 체크하도록 해둠.
+    # ==========================================================
+    raw_body = await request.body()
+    webhook_secret = (os.getenv("LEMON_WEBHOOK_SECRET") or "").strip()
+    if webhook_secret:
+        sig = (
+            request.headers.get("X-Signature")
+            or request.headers.get("x-signature")
+            or request.headers.get("X-Webhook-Signature")
+            or request.headers.get("x-webhook-signature")
+            or request.headers.get("Lemon-Signature")
+            or request.headers.get("lemon-signature")
+        )
+
+        if not sig:
+            print("[LEMON] missing signature header")
+            raise HTTPException(status_code=401, detail="Missing webhook signature")
+
+        computed = hmac.new(
+            webhook_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(str(sig).strip(), computed):
+            print("[LEMON] invalid signature", {"got": str(sig)[:16], "computed": computed[:16]})
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    # JSON 파싱은 서명검증 이후에 수행
     try:
-        body = await request.json()
+        body = json.loads(raw_body.decode("utf-8"))
     except Exception as e:
         print("[LEMON] invalid JSON", e)
         raise HTTPException(status_code=400, detail="Invalid JSON")
