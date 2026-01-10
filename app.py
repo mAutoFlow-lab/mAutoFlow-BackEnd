@@ -141,11 +141,14 @@ else:
 
 # Lemon Squeezy variant_id -> 내부 플랜 티어 매핑
 LEMON_VARIANT_TO_TIER = {
-    # TODO: 여기 숫자들은 실제 Lemon 대시보드의 variant_id로 교체해야 함
-    1202933: "expert",
+    # ✅ Live Mode
     1202932: "pro",
-}
+    1202933: "expert",
 
+    # ✅ Test Mode
+    1134483: "pro",
+    1135830: "expert",
+}
 
 
 @app.post("/api/share/create")
@@ -342,6 +345,12 @@ async def lemon_webhook(request: Request):
 
     # --- 공통 값 ---
     variant_id = attr.get("variant_id")
+    # ✅ Lemon이 문자열로 줄 때도 있어서 int 캐스팅(매핑 실패 방지)
+    try:
+        variant_id = int(variant_id) if variant_id is not None else None
+    except Exception:
+        pass
+    
     subscription_id = attr.get("id")
     status = attr.get("status")  # active|on_trial|cancelled|expired ...
     renews_at = attr.get("renews_at")
