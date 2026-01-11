@@ -338,7 +338,7 @@ async def lemon_webhook(request: Request):
     #   아래처럼 여러 후보를 같이 체크하도록 해둠.
     # ==========================================================
     raw_body = await request.body()
-    webhook_secret = (os.getenv("LEMON_WEBHOOK_API_LIVE") or "").strip()
+    webhook_secret = (os.getenv("LEMON_WEBHOOK_SECRET_LIVE") or "").strip()
     if webhook_secret:
         sig = (
             request.headers.get("X-Signature")
