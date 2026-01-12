@@ -896,8 +896,8 @@ class StructuredFlowEmitter:
         if len(s) > max_len:
             s = s[:max_len - 3] + "..."
 
-        # ✅ Mermaid 노드 라벨이 "..."로 감싸지므로, 내부 따옴표는 escape로 보존
-        return s.replace('"', r'\"')
+        # ✅ Mermaid 라벨 내부에서 \" 는 파서 에러를 유발할 수 있음 → 안전한 전각 따옴표로 치환
+        return s.replace('"', "＂")
 
 
     def _clean_cond_label(self, line: str) -> str:
@@ -927,7 +927,7 @@ class StructuredFlowEmitter:
         # 줄바꿈 가독성 (논리 연산자)
         s = s.replace("＆＆", "\n＆＆").replace("｜｜", "\n｜｜")
 
-        return s.replace('"', "'")
+        return s.replace('"', "＂")
 
 
     def _make_cond_node(self, node_id: str, label: str) -> str:
