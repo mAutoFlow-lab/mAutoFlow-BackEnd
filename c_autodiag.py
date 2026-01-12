@@ -752,7 +752,7 @@ def _escape_backslash_for_mermaid(text: str) -> str:
         else:
             # 리터럴 내부
             if ch == "\\":
-                out.append("\\\\")  # Mermaid escape 방지용
+                out.append("＼")  # ✅ Mermaid escape로 절대 해석되지 않는 "표시용 백슬래시"
             else:
                 out.append(ch)
 
@@ -896,7 +896,8 @@ class StructuredFlowEmitter:
         if len(s) > max_len:
             s = s[:max_len - 3] + "..."
 
-        return s.replace('"', "'")
+        # ✅ Mermaid 노드 라벨이 "..."로 감싸지므로, 내부 따옴표는 escape로 보존
+        return s.replace('"', r'\"')
 
 
     def _clean_cond_label(self, line: str) -> str:
