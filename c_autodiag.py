@@ -725,6 +725,46 @@ def splice_backslash_lines(lines: list[str]) -> list[str]:
     return out
 
 
+def _escape_backslash_for_mermaid(text: str) -> str:
+    """
+    Mermaid 라벨 안전화:
+    - "..." 또는 '...' (C 문자열/문자 리터럴) 내부의 '\' 는 '\\' 로 바꿔서
+      Mermaid가 \n, \r 등을 줄바꿈 escape로 해석하지 못하게 함.
+    - 리터럴 밖의 '\' 는 화면에 보이면 안 되므로 제거.
+      (C 코드에서 리터럴 밖 '\' 는 보통 line-splice 잔여/가독성용이므로 제거해도 라벨 의미 훼손이 거의 없음)
+    """
+    out = []
+    quote = None  # None / "'" / '"'
+    i = 0
+
+    while i < len(text):
+        ch = text[i]
+
+        if quote is None:
+            if ch in ("'", '"'):
+                quote = ch
+                out.append(ch)
+            elif ch == "\\":
+                # 리터럴 밖 백슬래시는 표시하지 않음
+                pass
+            else:
+                out.append(ch)
+        else:
+            # 리터럴 내부
+            if ch == "\\":
+                out.append("\\\\")  # Mermaid escape 방지용
+            else:
+                out.append(ch)
+
+            # quote 종료 (직전 문자가 '\'가 아닐 때만 종료로 판단)
+            if ch == quote and (i == 0 or text[i - 1] != "\\"):
+                quote = None
+
+        i += 1
+
+    return "".join(out)
+
+
 
 class StructuredFlowEmitter:
     """
@@ -831,6 +871,10 @@ class StructuredFlowEmitter:
         s = html.unescape(s)
         s = s.rstrip().rstrip('{}').rstrip()
 
+        # ✅ 문자열/문자 리터럴 내부에서만 '\' 를 이스케이프해서 Mermaid가 \n 등을 줄바꿈으로 해석하는 것을 방지
+        # ✅ 리터럴 밖(일반 코드)의 '\' 는 표시하지 않음(제거)
+        s = _escape_backslash_for_mermaid(s)
+
         # (선택) 라벨 표시 안전문자 치환
         s = (s
              .replace("<<", "＜＜")
@@ -844,12 +888,15 @@ class StructuredFlowEmitter:
              .replace("|", "｜")
         )
 
-        max_len = 220
+        is_pp = s.lstrip().startswith("#")
+        if is_pp:
+            s = s.replace("＆＆", "\n＆＆").replace("｜｜", "\n｜｜")
+
+        max_len = 1200 if is_pp else 220
         if len(s) > max_len:
             s = s[:max_len - 3] + "..."
 
         return s.replace('"', "'")
-
 
 
     def _clean_cond_label(self, line: str) -> str:
