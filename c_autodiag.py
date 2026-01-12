@@ -707,6 +707,8 @@ def splice_backslash_lines(lines: list[str]) -> list[str]:
     out = []
     buf = ""
     for line in lines:
+        stripped_r = line.rstrip()   # ✅ 누락되어 있던 변수 정의(핵심 수정)
+        
         # 줄 끝 공백 제거 후 '\' 체크
         if stripped_r.rstrip().endswith("\\"):
             part = stripped_r.rstrip()
