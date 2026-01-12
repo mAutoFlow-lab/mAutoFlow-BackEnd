@@ -708,15 +708,18 @@ def splice_backslash_lines(lines: list[str]) -> list[str]:
     buf = ""
     for line in lines:
         # 줄 끝 공백 제거 후 '\' 체크
-        stripped_r = line.rstrip("\r\n")
         if stripped_r.rstrip().endswith("\\"):
-            # '\' 제거하고 이어붙이기(한 칸 띄워서)
             part = stripped_r.rstrip()
-            part = part[:-1].rstrip()  # remove trailing '\'
+            part = part[:-1].rstrip()
             buf += (part + " ")
         else:
+            # ✅ buf가 쌓인 상태에서 "빈 줄"이 오면 flush 하지 말고 그냥 스킵
+            if buf and not stripped_r.strip():
+                continue
+
             if buf:
-                out.append(buf + stripped_r)
+                # ✅ 이어붙일 때 다음 줄 들여쓰기 제거 (공백 덩어리 방지)
+                out.append(buf + stripped_r.lstrip())
                 buf = ""
             else:
                 out.append(stripped_r)
@@ -761,6 +764,58 @@ def _escape_backslash_for_mermaid(text: str) -> str:
                 quote = None
 
         i += 1
+
+    return "".join(out)
+
+
+def _soft_wrap_label(text: str, width: int = 90, max_lines: int = 6) -> str:
+    """
+    Mermaid 노드 라벨이 너무 길 때, 코드 가독성 유지용 소프트 랩.
+    - 문자열/문자 리터럴 내부는 건드리지 않음
+    - 콤마/연산자 주변에서 개행 삽입
+    """
+    s = text
+    out = []
+    line_len = 0
+    lines_used = 1
+
+    in_str = False
+    in_chr = False
+    esc = False
+
+    def can_break(ch: str) -> bool:
+        return ch in [",", "+", "-", "*", "/", ")", "]", "}"]
+
+    for ch in s:
+        out.append(ch)
+
+        if esc:
+            esc = False
+        else:
+            if ch == "\\" and (in_str or in_chr):
+                esc = True
+            elif ch == '"' and not in_chr:
+                in_str = not in_str
+            elif ch == "'" and not in_str:
+                in_chr = not in_chr
+
+        # 길이 카운트는 리터럴 밖/안 동일하게 누적 (개행 판단은 리터럴 밖만)
+        if ch == "\n":
+            line_len = 0
+            lines_used += 1
+            if lines_used >= max_lines:
+                # 이미 줄을 많이 썼으면 더 이상 강제 개행은 하지 않음
+                pass
+            continue
+
+        line_len += 1
+
+        # ✅ 리터럴 밖에서만 줄바꿈 후보
+        if (not in_str) and (not in_chr) and lines_used < max_lines:
+            if line_len >= width and can_break(ch):
+                out.append("\n")
+                line_len = 0
+                lines_used += 1
 
     return "".join(out)
 
@@ -891,8 +946,12 @@ class StructuredFlowEmitter:
         is_pp = s.lstrip().startswith("#")
         if is_pp:
             s = s.replace("＆＆", "\n＆＆").replace("｜｜", "\n｜｜")
+        else:
+            # ✅ 일반 코드(대입/함수콜/표현식)도 너무 길면 먼저 소프트랩
+            if len(s) > 220:
+                s = _soft_wrap_label(s, width=90, max_lines=6)
 
-        max_len = 1200 if is_pp else 220
+        max_len = 1200 if is_pp else 900
         if len(s) > max_len:
             s = s[:max_len - 3] + "..."
 
@@ -1099,10 +1158,20 @@ class StructuredFlowEmitter:
             logical = raw.rstrip()
             j = i
             while logical.endswith("\\") and (j + 1) < n:
-                logical = logical[:-1].rstrip() + " " + lines[j + 1].lstrip()
-                j += 1
+                k = j + 1
+
+                # ✅ 빈 줄(공백 라인)은 스킵
+                while k < n and not lines[k].strip():
+                    k += 1
+                if k >= n:
+                    break
+
+                # ✅ 다음 줄은 strip()으로 붙여서 들여쓰기/공백 덩어리 방지
+                logical = logical[:-1].rstrip() + " " + lines[k].strip()
+                j = k
+
             raw = logical
-            next_i = j + 1  # i..j까지 소비했으니 다음은 j+1
+            next_i = j + 1
 
             # [NEW] 함수 호출/표현식이 괄호 때문에 줄바꿈된 경우도 "한 줄"로 합치기
             # 예) Det_ReportError(a,
