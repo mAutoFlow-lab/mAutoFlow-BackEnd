@@ -2118,14 +2118,33 @@ class StructuredFlowEmitter:
             #    (brace 블록이 잡힌 경우에는 inline if 로 보지 않도록 함)
             if brace_idx is None:
                 cond_line_last = lines[header_end]
-                m_inline = re.match(r"\s*(?:else\s+)?if\s*\([^)]*\)\s*(.+)", cond_line_last)
-                if m_inline:
-                    inline_stmt = m_inline.group(1).strip()
-                    if inline_stmt and not inline_stmt.startswith("{"):
-                        # ✅ 핵심: inline stmt 내부의 "else"를 pseudo-lines로 분해
-                        temp_lines = _split_inline_if_else(inline_stmt)
-                    else:
-                        inline_stmt = None
+
+                # ✅ 괄호 중첩을 고려해 "if ( ... )" 닫히는 지점까지 스캔 후, 뒤 tail을 실행문으로 추출
+                def _inline_stmt_after_if(line: str) -> str | None:
+                    m = re.search(r"\bif\s*\(", line)
+                    if not m:
+                        return None
+                    k = m.end()
+                    depth = 1
+                    while k < len(line) and depth > 0:
+                        ch = line[k]
+                        if ch == "(":
+                            depth += 1
+                        elif ch == ")":
+                            depth -= 1
+                        k += 1
+                    if depth != 0:
+                        return None
+                    tail = line[k:].strip()
+                    if not tail or tail.startswith("{"):
+                        return None
+                    return tail
+
+                inline_stmt = _inline_stmt_after_if(cond_line_last)
+                if inline_stmt:
+                    # ✅ inline stmt 내부의 "else"를 pseudo-lines로 분해
+                    temp_lines = _split_inline_if_else(inline_stmt)
+
 
             if brace_idx is not None:
                 # ✅ [NEW] 같은 줄에 { ... } 가 닫히는 inline 블록이면 내용 유실 방지
