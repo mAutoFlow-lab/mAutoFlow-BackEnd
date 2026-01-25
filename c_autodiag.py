@@ -990,6 +990,92 @@ class StructuredFlowEmitter:
 
         return s.replace('"', "＂")
 
+    # [ADD] StructuredFlowEmitter 클래스 내부 (아무 helper 메서드들 근처)
+
+    def _split_inline_if_else(self, stmt: str) -> list[str]:
+        """
+        한 줄 statement 안의 top-level 'else'를 분해해서 pseudo-lines로 만든다.
+        예) "if(a) if(b) x; else y;" -> ["if(a) if(b) x;", "else y;"]
+        """
+        s = (stmt or "").strip()
+        if not s:
+            return []
+
+        n = len(s)
+        par = brc = brk = 0
+        in_s = in_d = False
+
+        def is_boundary(pos: int) -> bool:
+            if pos <= 0 or pos >= n:
+                return True
+            return not (s[pos-1].isalnum() or s[pos-1] == "_") and not (s[pos].isalnum() or s[pos] == "_")
+
+        else_pos = None
+        i = 0
+        while i < n:
+            ch = s[i]
+
+            if in_s:
+                if ch == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if ch == "'":
+                    in_s = False
+                i += 1
+                continue
+
+            if in_d:
+                if ch == "\\" and i + 1 < n:
+                    i += 2
+                    continue
+                if ch == '"':
+                    in_d = False
+                i += 1
+                continue
+
+            if ch == "'":
+                in_s = True; i += 1; continue
+            if ch == '"':
+                in_d = True; i += 1; continue
+
+            if ch == "(":
+                par += 1
+            elif ch == ")":
+                par = max(0, par - 1)
+            elif ch == "{":
+                brc += 1
+            elif ch == "}":
+                brc = max(0, brc - 1)
+            elif ch == "[":
+                brk += 1
+            elif ch == "]":
+                brk = max(0, brk - 1)
+
+            if par == 0 and brc == 0 and brk == 0:
+                if s.startswith("else", i) and is_boundary(i) and is_boundary(i + 4):
+                    else_pos = i
+                    break
+
+            i += 1
+
+        if else_pos is None:
+            return [s]
+
+        head = s[:else_pos].rstrip()
+        tail = s[else_pos:].lstrip()  # "else ..."
+
+        out = []
+        if head:
+            out.append(head)
+        out.append(tail)
+
+        # tail 안에 또 else가 있으면 재귀 분해
+        if "else" in tail[4:]:
+            last = out.pop()
+            out.extend(self._split_inline_if_else(last))
+
+        return out
+
 
     def _make_cond_node(self, node_id: str, label: str) -> str:
         """
@@ -2426,7 +2512,7 @@ class StructuredFlowEmitter:
 
                 if tail and not tail.startswith("{"):
                     # 예: for (...) x += i;
-                    body_temp_lines = _split_inline_if_else(tail)  # 이미 너가 추가해둔 helper 재사용
+                    body_temp_lines = self._split_inline_if_else(tail)
                     body_start, body_end = 0, len(body_temp_lines)
                     after_idx = base_idx + 1  # ✅ 원본 코드에서는 다음 줄부터 계속 파싱
                 else:
