@@ -3098,12 +3098,36 @@ class StructuredFlowEmitter:
             case_nodes = {}
             prev_boundary = idx + 1  # switch 헤더 다음부터 시작(필요시 brace 처리 보정 가능)
 
+            case_inline_map = {}  # (추가) header line index -> ["stmt1;", "stmt2;", ...]
+
+            def _split_case_header_inline(raw_line: str):
+                # 주석 제거 후, case/default ':' 기준으로 헤더/inline 분리
+                no_cmt = remove_comments(raw_line)
+                m = re.match(r'^\s*((?:case\b[^:]*|default)\s*:)\s*(.*)$', no_cmt)
+                if not m:
+                    return raw_line.strip(), []
+                header = m.group(1).strip()
+                tail = m.group(2).strip()
+
+                if not tail:
+                    return header, []
+
+                # tail을 ';' 기준으로 statement 리스트로 분리 (세미콜론 복원)
+                parts = [p.strip() for p in tail.split(';') if p.strip()]
+                return header, [p + ';' for p in parts]
+
             for h in header_idxs:
+                
                 case_header_line = lines[h]
                 case_id = self.nid()
-                case_label = self._clean_label(case_header_line.strip())
+
+                case_header_only, inline_stmts = _split_case_header_inline(case_header_line)
+                case_inline_map[h] = inline_stmts
+
+                case_label = self._clean_label(case_header_only)
                 self.add(f'{case_id}["{case_label}"]')
                 self._bind_node_line(case_id, h)
+
 
                 # [FIX] "다음 case 앞" 전처리기는, case 헤더 바로 직전에 붙은(연속된) 것만 끌어올린다.
                 #       (이렇게 해야 case 내부의 #if/#endif가 밖으로 중복 표기되지 않음)
@@ -3163,11 +3187,20 @@ class StructuredFlowEmitter:
                     # prev_h 와 next_h 사이에 break/return/goto 가 있으면
                     # fall-through 가 끊긴 것으로 본다.
                     has_stop = False
-                    for k in range(prev_h + 1, next_h):
-                        s = lines[k].strip()
-                        if re.match(r"^(break|return|goto)\b", s):
+
+                    # (추가) prev_h 헤더 라인 "inline statement"에 stop이 있으면 끊김
+                    for s in case_inline_map.get(prev_h, []):
+                        if re.match(r"^\s*(break|return|goto)\b", s):
                             has_stop = True
                             break
+
+                    # 기존 로직(헤더 다음 줄 ~ 다음 헤더 전까지)도 유지
+                    if not has_stop:
+                        for k in range(prev_h + 1, next_h):
+                            s = lines[k].strip()
+                            if re.search(r"\b(break|return|goto)\b", s):
+                                has_stop = True
+                                break
 
                     if has_stop:
                         break
@@ -3229,19 +3262,50 @@ class StructuredFlowEmitter:
                         self.add(f"{case_nodes[h]} --> {merge}")
                     continue
 
-                # 1) 대표 case(마지막 header)의 본문 파싱
-                entry_holder_body = []
-                exit_node = self._parse_sequence(
-                    lines,
-                    case_body_start,
-                    case_body_end,
-                    main_case_id,
-                    first_edge_label=None,
-                    entry_holder=entry_holder_body,
-                )
-                entry_node = entry_holder_body[0] if entry_holder_body else main_case_id
+                # (추가) 대표 case 헤더 라인의 inline statement를 먼저 노드로 생성
+                inline_first = None
+                inline_last = main_case_id
+                terminated_by_inline_stop = False
 
-                # 2) 같은 그룹의 "앞쪽" case 들에 대한 fall-through 처리
+                for stmt in case_inline_map.get(main_header, []):
+                    sid = self.nid()
+                    self.add(f'{sid}["{self._clean_label(stmt)}"]')
+                    self._bind_node_line(sid, main_header)  # 같은 원본 line에 bind
+                    self.add(f"{inline_last} --> {sid}")
+
+                    if inline_first is None:
+                        inline_first = sid
+                    inline_last = sid
+
+                    # (중요) switch 안 break는 after-switch(merge)로 보내고, 이후 body는 파싱하지 않음
+                    if re.match(r"^\s*break\b", stmt):
+                        self.add(f"{sid} --> {merge}")
+                        terminated_by_inline_stop = True
+                        break
+                    if re.match(r"^\s*(return|goto)\b", stmt):
+                        terminated_by_inline_stop = True
+                        break
+
+                entry_holder_body = []
+                if not terminated_by_inline_stop:
+                    exit_node = self._parse_sequence(
+                        lines,
+                        case_body_start,
+                        case_body_end,
+                        inline_last,              # (변경) prev_node를 inline_last로
+                        first_edge_label=None,
+                        entry_holder=entry_holder_body,
+                    )
+                else:
+                    exit_node = inline_last
+
+                # (변경) entry_node는 inline이 있으면 inline_first가 우선
+                if inline_first is not None:
+                    entry_node = inline_first
+                else:
+                    entry_node = entry_holder_body[0] if entry_holder_body else main_case_id
+
+                                # 2) 같은 그룹의 "앞쪽" case 들에 대한 fall-through 처리
                 for idx_g in range(len(group) - 2, -1, -1):  # 뒤에서부터 순회
                     h = group[idx_g]
                     next_h = group[idx_g + 1]
