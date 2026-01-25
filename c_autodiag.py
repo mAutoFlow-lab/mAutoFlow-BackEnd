@@ -2364,6 +2364,7 @@ class StructuredFlowEmitter:
                 k = m.end()
                 depth = 1
                 buf = []
+                close_paren_pos = None  # ✅ 추가: ')' 위치 저장
                 while k < len(loop_line) and depth > 0:
                     ch = loop_line[k]
                     if ch == "(":
@@ -2371,6 +2372,7 @@ class StructuredFlowEmitter:
                     elif ch == ")":
                         depth -= 1
                         if depth == 0:
+                            close_paren_pos = k   # ✅ 추가
                             break
                     buf.append(ch)
                     k += 1
@@ -2412,13 +2414,27 @@ class StructuredFlowEmitter:
                 if j < end_idx and "{" in lines[j]:
                     brace_idx = j
 
+            body_temp_lines = None  # ✅ 추가: inline body면 여기 사용
+
             if brace_idx is not None:
                 body_start, body_end, after_idx = self._find_block(lines, brace_idx)
             else:
-                j = base_idx + 1   # ✅ 헤더 끝 다음 줄이 body 시작
-                while j < end_idx and not lines[j].strip():
-                    j += 1
-                body_start, body_end, after_idx = j, j + 1, j + 1
+                # ✅ 1) for(...) 뒤에 같은 줄로 붙는 inline body 먼저 처리
+                tail = ""
+                if close_paren_pos is not None:
+                    tail = loop_line[close_paren_pos + 1 :].strip()
+
+                if tail and not tail.startswith("{"):
+                    # 예: for (...) x += i;
+                    body_temp_lines = _split_inline_if_else(tail)  # 이미 너가 추가해둔 helper 재사용
+                    body_start, body_end = 0, len(body_temp_lines)
+                    after_idx = base_idx + 1  # ✅ 원본 코드에서는 다음 줄부터 계속 파싱
+                else:
+                    # ✅ 2) 기존 방식: 다음 줄 1줄이 body
+                    j = base_idx + 1
+                    while j < end_idx and not lines[j].strip():
+                        j += 1
+                    body_start, body_end, after_idx = j, j + 1, j + 1
 
             # 완전 빈 for(;;) 루프면 아예 없다고 보고 넘어간다
             if (not cond) and _block_is_effectively_empty(lines, body_start, body_end):
@@ -2463,8 +2479,9 @@ class StructuredFlowEmitter:
 
             # --- 조건이 있는 일반 for ---
             if cond:
+                body_lines = body_temp_lines if body_temp_lines is not None else lines
                 body_exit = self._parse_sequence(
-                    lines, body_start, body_end, cond_id, first_edge_label="True"
+                    body_lines, body_start, body_end, cond_id, first_edge_label="True"
                 )
                 break_nodes = self.break_stack.pop()
                 continue_nodes = self.continue_stack.pop()
