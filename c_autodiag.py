@@ -2520,7 +2520,9 @@ class StructuredFlowEmitter:
                     j = base_idx + 1
                     while j < end_idx and not lines[j].strip():
                         j += 1
-                    body_start, body_end, after_idx = j, j + 1, j + 1
+                        
+                    stmt_after = self._span_single_statement(lines, j, end_idx)  # ✅ if면 else까지 포함
+                    body_start, body_end, after_idx = j, stmt_after, stmt_after
 
             # 완전 빈 for(;;) 루프면 아예 없다고 보고 넘어간다
             if (not cond) and _block_is_effectively_empty(lines, body_start, body_end):
