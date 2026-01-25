@@ -1703,6 +1703,99 @@ class StructuredFlowEmitter:
                         return open_idx, close_idx, inner
             return None
 
+        def _split_inline_if_else(stmt: str) -> list[str]:
+            """
+            한 줄 statement 안에 포함된 'else'를 top-level에서 분해해서
+            ["if(...) x;", "else y;"] 같은 pseudo-lines로 만든다.
+            - dangling else 케이스: "if(a) if(b) x; else y;" 같은 내부도 정상 처리되게 함
+            """
+            s = stmt.strip()
+            if not s:
+                return []
+
+            out = []
+            i = 0
+            n = len(s)
+
+            par = 0   # ()
+            brc = 0   # {}
+            brk = 0   # []
+            in_s = False
+            in_d = False
+
+            def is_word_boundary(pos: int) -> bool:
+                if pos <= 0 or pos >= n:
+                    return True
+                return not (s[pos-1].isalnum() or s[pos-1] == "_") and not (s[pos].isalnum() or s[pos] == "_")
+
+            # top-level else 위치 찾기
+            else_pos = None
+            while i < n:
+                ch = s[i]
+
+                # string skip
+                if in_s:
+                    if ch == "\\" and i + 1 < n:
+                        i += 2
+                        continue
+                    if ch == "'":
+                        in_s = False
+                    i += 1
+                    continue
+                if in_d:
+                    if ch == "\\" and i + 1 < n:
+                        i += 2
+                        continue
+                    if ch == '"':
+                        in_d = False
+                    i += 1
+                    continue
+
+                if ch == "'":
+                    in_s = True; i += 1; continue
+                if ch == '"':
+                    in_d = True; i += 1; continue
+
+                if ch == "(":
+                    par += 1
+                elif ch == ")":
+                    par = max(0, par - 1)
+                elif ch == "{":
+                    brc += 1
+                elif ch == "}":
+                    brc = max(0, brc - 1)
+                elif ch == "[":
+                    brk += 1
+                elif ch == "]":
+                    brk = max(0, brk - 1)
+
+                # top-level에서만 else를 분해 대상으로 봄
+                if par == 0 and brc == 0 and brk == 0:
+                    if s.startswith("else", i) and is_word_boundary(i) and is_word_boundary(i+4):
+                        else_pos = i
+                        break
+
+                i += 1
+
+            if else_pos is None:
+                return [s]
+
+            head = s[:else_pos].rstrip()
+            tail = s[else_pos:].lstrip()   # "else ...."
+
+            if head:
+                out.append(head)
+
+            # tail은 "else ..." 이므로, "else " 이후를 다시 분해(중첩 else 대응)
+            out.append(tail)
+            # tail 안에 또 "else"가 들어있을 수 있으니 재귀적으로 분해
+            if "else" in tail[4:]:
+                # out[-1]을 재분해해서 치환
+                last = out.pop()
+                out.extend(_split_inline_if_else(last))
+
+            return out
+
         def _inline_to_lines(inner: str) -> list[str]:
             """
             inline 블록 문자열을 파서가 읽을 수 있게 줄로 펼친다.
@@ -1802,7 +1895,8 @@ class StructuredFlowEmitter:
                 if m_inline:
                     inline_stmt = m_inline.group(1).strip()
                     if inline_stmt and not inline_stmt.startswith("{"):
-                        temp_lines = [inline_stmt]
+                        # ✅ 핵심: inline stmt 내부의 "else"를 pseudo-lines로 분해
+                        temp_lines = _split_inline_if_else(inline_stmt)
                     else:
                         inline_stmt = None
 
@@ -1819,7 +1913,7 @@ class StructuredFlowEmitter:
                     then_start, then_end, after_then = self._find_block(lines, brace_idx)
             elif temp_lines is not None:
                 # if(cond) stmt; 형태 (중괄호 없음)
-                then_start, then_end = 0, 1
+                then_start, then_end = 0, len(temp_lines)   # ✅ 1 고정 제거
                 after_then = header_end + 1
             else:
                 # 4) 중괄호도 없고 같은 줄에 statement 도 없으면
@@ -1944,8 +2038,9 @@ class StructuredFlowEmitter:
 
             # ✅ inline else면 else_temp_lines로 강제 1줄 블록화
             if else_inline_stmt is not None:
-                else_temp_lines = [else_inline_stmt]
-                else_start, else_end, after_else = 0, 1, final_else_idx + 1
+                # ✅ else 한 줄도 내부 else(또는 else if) 포함 가능하므로 분해
+                else_temp_lines = _split_inline_if_else(else_inline_stmt)
+                else_start, else_end, after_else = 0, len(else_temp_lines), final_else_idx + 1
 
             elif brace_idx is not None:
                 m_inline_blk = _match_inline_brace_block(lines[brace_idx])
