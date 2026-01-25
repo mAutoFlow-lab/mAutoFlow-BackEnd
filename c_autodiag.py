@@ -1244,7 +1244,15 @@ class StructuredFlowEmitter:
             
             if (not is_preproc) and (not is_ctrl) and (not is_label_line) and (not is_case_line):
                 k = next_i
-                while k < n and not raw.strip().endswith(";"):
+                # [변경]  (세미콜론 판정 전: 라인 끝 주석 제거)
+                def _strip_line_end_comment(s: str) -> str:
+                    # // 주석 제거
+                    s = re.sub(r"//.*$", "", s)
+                    # 한 줄에 닫히는 /* ... */ 형태만 라인 끝에서 제거
+                    s = re.sub(r"/\*.*?\*/\s*$", "", s)
+                    return s
+
+                while k < n and not _strip_line_end_comment(raw).strip().endswith(";"):
                     nxt_raw = lines[k]
                     nxt = nxt_raw.strip()
 
@@ -1258,6 +1266,7 @@ class StructuredFlowEmitter:
                         or nxt in ("{", "}")
                         or re.match(r"^[A-Za-z_]\w*\s*:\s*$", nxt)
                         or re.match(r"^(case\b|default\s*:)", nxt)
+                        or re.match(r"^\s*(if|for|while|switch|do)\b", nxt_raw)
                     ):
                         break
 
