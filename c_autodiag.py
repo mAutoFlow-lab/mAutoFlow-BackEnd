@@ -1051,6 +1051,147 @@ class StructuredFlowEmitter:
         after_idx = i
         return start, end_exclusive, after_idx
 
+    # 기존: def _find_block(...) ... return start, end_exclusive, after_idx
+    # 변경: _find_block 아래에 아래 2개 메서드 추가
+
+    def _span_single_statement(self, lines, start_idx, end_idx):
+        """
+        start_idx에서 시작하는 '단일 statement 1개'가 차지하는 범위의 끝(after_idx)를 리턴.
+        (dangling else를 포함하는 if-statement 전체도 1개 statement로 취급)
+        """
+        i = start_idx
+        while i < end_idx and not lines[i].strip():
+            i += 1
+        if i >= end_idx:
+            return i
+
+        s = lines[i].lstrip()
+
+        # 블록만 덩그러니 나오는 경우: { ... }
+        if s.startswith("{"):
+            _, _, after = self._find_block(lines, i)
+            return after
+
+        # if / else if  (else if도 단일 statement로 처리)
+        if re.match(r"^(?:else\s+)?if\b", s):
+            return self._span_if_statement(lines, i, end_idx)
+
+        # for / while / switch (간단 처리: 블록 있으면 블록, 없으면 다음 statement 1개)
+        if re.match(r"^(for|while|switch)\b", s):
+            # 헤더 끝 찾기(괄호 밸런스)
+            j = i
+            bal = 0
+            saw = False
+            while j < end_idx:
+                line = lines[j]
+                if "(" in line:
+                    saw = True
+                bal += line.count("(") - line.count(")")
+                if saw and bal <= 0:
+                    break
+                j += 1
+            header_end = j
+
+            # 블록 여부
+            if "{" in lines[header_end]:
+                _, _, after = self._find_block(lines, header_end)
+                return after
+
+            k = header_end + 1
+            while k < end_idx and not lines[k].strip():
+                k += 1
+            if k < end_idx and lines[k].lstrip().startswith("{"):
+                _, _, after = self._find_block(lines, k)
+                return after
+
+            # 중괄호 없으면 다음 statement 1개
+            body_start = header_end + 1
+            while body_start < end_idx and not lines[body_start].strip():
+                body_start += 1
+            return self._span_single_statement(lines, body_start, end_idx)
+
+        # 일반 statement는 1줄
+        return i + 1
+
+
+    def _span_if_statement(self, lines, if_idx, end_idx):
+        """
+        if_idx에서 시작하는 if-statement 전체 범위(after_idx)를 리턴.
+        - then이 단일 statement이면 그 statement가 제어문일 때 전체 span(else 포함)
+        - else/else if까지 포함해서 끝까지 확장
+        """
+        # 1) if 헤더 끝 찾기(멀티라인 괄호)
+        j = if_idx
+        bal = 0
+        saw = False
+        while j < end_idx:
+            line = lines[j]
+            if "(" in line:
+                saw = True
+            bal += line.count("(") - line.count(")")
+            if saw and bal <= 0:
+                break
+            j += 1
+        header_end = j if j < end_idx else if_idx
+
+        # 2) then-body span 찾기
+        brace_idx = None
+        if "{" in lines[header_end]:
+            brace_idx = header_end
+        else:
+            k = header_end + 1
+            while k < end_idx and not lines[k].strip():
+                k += 1
+            if k < end_idx and lines[k].lstrip().startswith("{"):
+                brace_idx = k
+
+        if brace_idx is not None:
+            # 블록 then
+            _, _, after_then = self._find_block(lines, brace_idx)
+        else:
+            # inline then(같은 줄에 stmt가 붙는 if(cond) stmt;)
+            m_inline = re.match(r"\s*(?:else\s+)?if\s*\([^)]*\)\s*(.+)", lines[header_end])
+            inline_stmt = (m_inline.group(1).strip() if m_inline else "")
+            if inline_stmt and not inline_stmt.startswith("{"):
+                after_then = header_end + 1
+            else:
+                # 다음 statement 1개가 then-body
+                body_start = header_end + 1
+                while body_start < end_idx and not lines[body_start].strip():
+                    body_start += 1
+                after_then = self._span_single_statement(lines, body_start, end_idx)
+
+        # 3) else/else if 붙는지 확인 (dangling else 포함)
+        k = after_then
+        while k < end_idx and not lines[k].strip():
+            k += 1
+        if k >= end_idx:
+            return after_then
+
+        t = lines[k].lstrip()
+        if not t.startswith("else"):
+            return after_then
+
+        # else if => 그 if-statement 전체가 else-body
+        if re.match(r"^else\s+if\b", t):
+            return self._span_if_statement(lines, k, end_idx)
+
+        # else 블록/단일문 처리
+        if "{" in lines[k]:
+            _, _, after_else = self._find_block(lines, k)
+            return after_else
+
+        m_else_inline = re.match(r"^else\s+(.+)", t)
+        if m_else_inline and m_else_inline.group(1).strip():
+            return k + 1
+
+        body_start = k + 1
+        while body_start < end_idx and not lines[body_start].strip():
+            body_start += 1
+        after_else = self._span_single_statement(lines, body_start, end_idx)
+        return after_else
+
+
     # ---- 메인 엔트리 ----
     def emit_from_body(self, body: str) -> str:
         """
@@ -1921,7 +2062,9 @@ class StructuredFlowEmitter:
                 k = header_end + 1
                 while k < end_idx and not lines[k].strip():
                     k += 1
-                then_start, then_end, after_then = k, k + 1, k + 1
+                # 변경 (단일 statement 전체 span을 잡는다: 내부 if면 else까지 포함됨)
+                stmt_after = self._span_single_statement(lines, k, end_idx)
+                then_start, then_end, after_then = k, stmt_after, stmt_after
 
 
             # ----- True 분기 파싱 -----
