@@ -2085,7 +2085,7 @@ class StructuredFlowEmitter:
             # ✅ 실제 then 블록은 prefix_pp 이후 노드(true_prev)에서 이어서 파싱
             if temp_lines is not None:
                 then_exit = self._parse_sequence(
-                    temp_lines, 0, 1, true_prev, first_edge_label="True"
+                    temp_lines, 0, len(temp_lines), true_prev, first_edge_label="True"
                 )
             else:
                 then_exit = self._parse_sequence(
@@ -2610,18 +2610,43 @@ class StructuredFlowEmitter:
         if brace_idx is not None:
             body_start, body_end, after_idx = self._find_block(lines, brace_idx)
         else:
-            j = base_idx + 1
-            while j < end_idx and not lines[j].strip():
-                j += 1
-            body_start, body_end, after_idx = j, j + 1, j + 1
+            # ✅ while (cond) <tail> 형태의 inline body 지원
+            tail = loop_line[len(cond_text):].strip()
 
+            # 1) while(cond);  처럼 빈 루프면 바디 없이 바로 루프로 되돌아가는 형태로 취급
+            if tail.startswith(";"):
+                body_start, body_end, after_idx = base_idx + 1, base_idx + 1, base_idx + 1
+
+            # 2) while(cond) x--;  처럼 같은 줄에 실행문이 붙어있으면 그걸 바디로 만든다
+            elif tail and not tail.startswith("{"):
+                stmt_id = self.nid()
+                stmt_text = tail if tail.endswith(";") else (tail + ";")
+                stmt_label = self._clean_label(stmt_text)
+                self.add(f'{stmt_id}["{stmt_label}"]')
+                self._bind_node_line(stmt_id, idx)
+
+                # True 분기 = inline stmt
+                self.add(f"{loop_id} -->|True| {stmt_id}")
+
+                # 바디 exit 는 이 stmt
+                body_start, body_end, after_idx = base_idx + 1, base_idx + 1, base_idx + 1
+                body_exit = stmt_id  # ✅ 아래의 body_exit 계산을 덮어쓰기 위해 미리 지정
+
+            # 3) 기존 방식: 다음 줄 1줄을 바디로
+            else:
+                j = base_idx + 1
+                while j < end_idx and not lines[j].strip():
+                    j += 1
+                body_start, body_end, after_idx = j, j + 1, j + 1
+        
         # 이 while 안에서 나오는 break/continue 를 수집하기 위해 스택 push
         self.break_stack.append([])
         self.continue_stack.append([])            
 
-        body_exit = self._parse_sequence(
-            lines, body_start, body_end, loop_id, first_edge_label="True"
-        )
+        if "body_exit" not in locals():
+            body_exit = self._parse_sequence(
+                lines, body_start, body_end, loop_id, first_edge_label="True"
+            )
         
         # 해당 while 루프에서 수집된 break/continue 노드
         break_nodes = self.break_stack.pop()
