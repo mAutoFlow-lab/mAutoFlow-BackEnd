@@ -1137,6 +1137,101 @@ class StructuredFlowEmitter:
         after_idx = i
         return start, end_exclusive, after_idx
 
+    def _find_statement_span(self, lines, start, end_limit):
+        """
+        start에서 시작하는 '단일 statement'가 끝나는 index(exclusive)를 반환.
+        - if/else-if/else 체인
+        - for/while/switch/do 의 brace-less body
+        를 포함해서 한 덩어리로 끝까지 잡는다.
+        """
+        i = start
+        n = end_limit
+
+        # 공백 스킵
+        while i < n and not lines[i].strip():
+            i += 1
+        if i >= n:
+            return i
+
+        s = lines[i].strip()
+
+        def next_nonempty(k):
+            while k < n and not lines[k].strip():
+                k += 1
+            return k
+
+        # --- if statement ---
+        if re.match(r"^if\b", s):
+            # then 파트
+            if "{" in s:
+                _, _, after_then = self._find_block(lines, i)
+            else:
+                # inline then (if (...) stmt;)
+                after_paren = re.split(r"\)\s*", s, maxsplit=1)
+                if len(after_paren) == 2 and after_paren[1].strip():
+                    after_then = i + 1
+                else:
+                    body_start = next_nonempty(i + 1)
+                    after_then = self._find_statement_span(lines, body_start, n)
+
+            # else / else if 파트
+            k = next_nonempty(after_then)
+            if k < n and re.match(r"^else\b", lines[k].strip()):
+                es = lines[k].strip()
+                # else if (...)
+                if re.match(r"^else\s+if\b", es):
+                    # "else if"는 사실상 if로 다시 시작
+                    return self._find_statement_span(lines, k, n)
+
+                # else { ... } or else stmt;
+                if "{" in es:
+                    _, _, after_else = self._find_block(lines, k)
+                    return after_else
+                else:
+                    # else inline stmt
+                    tail = re.sub(r"^else\b", "", es, count=1).strip()
+                    if tail:
+                        return k + 1
+                    body2_start = next_nonempty(k + 1)
+                    return self._find_statement_span(lines, body2_start, n)
+
+            return after_then
+
+        # --- for / while / switch ---
+        if re.match(r"^(for|while|switch)\b", s):
+            if "{" in s:
+                _, _, after_blk = self._find_block(lines, i)
+                return after_blk
+
+            # inline body 있는지(while(...) x--; 같은)
+            after_paren = re.split(r"\)\s*", s, maxsplit=1)
+            if len(after_paren) == 2 and after_paren[1].strip():
+                return i + 1
+
+            body_start = next_nonempty(i + 1)
+            return self._find_statement_span(lines, body_start, n)
+
+        # --- do ... while(...) ---
+        if re.match(r"^do\b", s):
+            if "{" in s:
+                _, _, after_blk = self._find_block(lines, i)
+                k = next_nonempty(after_blk)
+                # while (...) ; 포함
+                if k < n and re.match(r"^while\b", lines[k].strip()):
+                    return k + 1
+                return after_blk
+
+            body_start = next_nonempty(i + 1)
+            body_end = self._find_statement_span(lines, body_start, n)
+            k = next_nonempty(body_end)
+            if k < n and re.match(r"^while\b", lines[k].strip()):
+                return k + 1
+            return body_end
+
+        # --- 일반 statement: 기본은 1줄로 취급 (여기선 do-body용으로만 쓰는게 목적) ---
+        return i + 1
+    
+
     # 기존: def _find_block(...) ... return start, end_exclusive, after_idx
     # 변경: _find_block 아래에 아래 2개 메서드 추가
 
@@ -2844,11 +2939,14 @@ class StructuredFlowEmitter:
         if brace_idx is not None:
             body_start, body_end, after_body = self._find_block(lines, brace_idx)
         else:
-            # 중괄호 없는 한 줄짜리 do 문 (do stmt; while(...);)
+            # 중괄호 없는 do 문도 "단일 statement" 단위로 body span을 잡아야 함
+            # (예: do 아래 if (...) ...; else ...; 는 1 statement)
             j = idx + 1
             while j < end_idx and not lines[j].strip():
                 j += 1
-            body_start, body_end, after_body = j, j + 1, j + 1
+
+            stmt_after = self._span_single_statement(lines, j, end_idx)  # ✅ 핵심
+            body_start, body_end, after_body = j, stmt_after, stmt_after
 
         # --- while 꼬리(조건) 위치 찾기 ---
         # 1) "} while (cond);" 처럼 '}'와 while 이 같은 줄에 있는 경우 먼저 처리
