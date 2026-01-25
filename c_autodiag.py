@@ -1244,15 +1244,7 @@ class StructuredFlowEmitter:
             
             if (not is_preproc) and (not is_ctrl) and (not is_label_line) and (not is_case_line):
                 k = next_i
-                # [변경]  (세미콜론 판정 전: 라인 끝 주석 제거)
-                def _strip_line_end_comment(s: str) -> str:
-                    # // 주석 제거
-                    s = re.sub(r"//.*$", "", s)
-                    # 한 줄에 닫히는 /* ... */ 형태만 라인 끝에서 제거
-                    s = re.sub(r"/\*.*?\*/\s*$", "", s)
-                    return s
-
-                while k < n and not _strip_line_end_comment(raw).strip().endswith(";"):
+                while k < n and not raw.strip().endswith(";"):
                     nxt_raw = lines[k]
                     nxt = nxt_raw.strip()
 
@@ -1266,7 +1258,6 @@ class StructuredFlowEmitter:
                         or nxt in ("{", "}")
                         or re.match(r"^[A-Za-z_]\w*\s*:\s*$", nxt)
                         or re.match(r"^(case\b|default\s*:)", nxt)
-                        or re.match(r"^\s*(if|for|while|switch|do)\b", nxt_raw)
                     ):
                         break
 
@@ -1797,7 +1788,7 @@ class StructuredFlowEmitter:
                        continue
                     break
 
-                if j < end_idx and "{" in lines[j]:
+                if j < end_idx and re.match(r"^\s*\{", lines[j]):
                     brace_idx = j
 
             inline_stmt = None
@@ -1926,19 +1917,37 @@ class StructuredFlowEmitter:
 
         # ----- 마지막 else 블록 처리 -----
         if has_final_else and final_else_idx is not None:
+            # ✅ [NEW] else 한 줄 실행문: "else stmt;" 형태 처리
+            else_inline_stmt = None
+            m_else_inline = re.match(r"\s*else\b(.*)$", lines[final_else_idx])
+            if m_else_inline:
+                tail = m_else_inline.group(1).strip()
+                # "else { ... }" / "else" 단독은 제외하고, 실행문만 붙은 경우만
+                if tail and not tail.startswith("{"):
+                    else_inline_stmt = tail
+
             brace_idx = None
-            if "{" in lines[final_else_idx]:
-                brace_idx = final_else_idx
-            else:
-                m = final_else_idx + 1
-                while m < end_idx and not lines[m].strip():
-                    m += 1
-                if m < end_idx and "{" in lines[m]:
-                    brace_idx = m
+
+            # ✅ inline else면 다음 줄의 '{'를 절대 else 블록으로 오인하면 안 됨
+            if else_inline_stmt is None:
+                if "{" in lines[final_else_idx]:
+                    brace_idx = final_else_idx
+                else:
+                    m = final_else_idx + 1
+                    while m < end_idx and not lines[m].strip():
+                        m += 1
+                    # (2번 수정) "{" 로 시작할 때만 인정
+                    if m < end_idx and re.match(r"^\s*\{", lines[m]):
+                        brace_idx = m
 
             else_temp_lines = None
 
-            if brace_idx is not None:
+            # ✅ inline else면 else_temp_lines로 강제 1줄 블록화
+            if else_inline_stmt is not None:
+                else_temp_lines = [else_inline_stmt]
+                else_start, else_end, after_else = 0, 1, final_else_idx + 1
+
+            elif brace_idx is not None:
                 m_inline_blk = _match_inline_brace_block(lines[brace_idx])
                 if m_inline_blk is not None:
                     _, _, inner = m_inline_blk
@@ -1946,6 +1955,7 @@ class StructuredFlowEmitter:
                     else_start, else_end, after_else = 0, len(else_temp_lines), brace_idx + 1
                 else:
                     else_start, else_end, after_else = self._find_block(lines, brace_idx)
+
             else:
                 m = final_else_idx + 1
                 while m < end_idx and not lines[m].strip():
