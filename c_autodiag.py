@@ -2742,7 +2742,8 @@ class StructuredFlowEmitter:
                 j = base_idx + 1
                 while j < end_idx and not lines[j].strip():
                     j += 1
-                body_start, body_end, after_idx = j, j + 1, j + 1
+                stmt_after = self._span_single_statement(lines, j, end_idx)  # ✅ 핵심
+                body_start, body_end, after_idx = j, stmt_after, stmt_after
         
         # 이 while 안에서 나오는 break/continue 를 수집하기 위해 스택 push
         self.break_stack.append([])
