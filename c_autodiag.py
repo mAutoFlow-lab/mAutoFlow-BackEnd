@@ -2212,32 +2212,41 @@ class StructuredFlowEmitter:
             # 3) 블록이 아닌 한 줄 if(if (cond) stmt;) 인지 검사
             #    (brace 블록이 잡힌 경우에는 inline if 로 보지 않도록 함)
             if brace_idx is None:
-                cond_line_last = lines[header_end]
+                # 멀티라인 if 헤더 전체를 대상으로 inline stmt 추출
+                header_join = "\n".join(header_lines)
 
-                # ✅ 괄호 중첩을 고려해 "if ( ... )" 닫히는 지점까지 스캔 후, 뒤 tail을 실행문으로 추출
-                def _inline_stmt_after_if(line: str) -> str | None:
-                    m = re.search(r"\bif\s*\(", line)
+                def _inline_stmt_after_if_multiline(header_src: str) -> str | None:
+                    # else if 포함해도 안전하게(헤더 텍스트 전체에서 if(를 찾기)
+                    m = re.search(r"\b(?:else\s+)?if\s*\(", header_src)
                     if not m:
                         return None
+
                     k = m.end()
                     depth = 1
-                    while k < len(line) and depth > 0:
-                        ch = line[k]
+                    while k < len(header_src) and depth > 0:
+                        ch = header_src[k]
                         if ch == "(":
                             depth += 1
                         elif ch == ")":
                             depth -= 1
                         k += 1
+
                     if depth != 0:
                         return None
-                    tail = line[k:].strip()
+
+                    tail = header_src[k:].strip()
                     if not tail or tail.startswith("{"):
                         return None
-                    return tail
 
-                inline_stmt = _inline_stmt_after_if(cond_line_last)
+                    # 닫는 ')' 이후 같은 “라인”에 붙은 실행문만 가져오도록(안전)
+                    tail_first = tail.splitlines()[0].strip()
+                    if not tail_first:
+                        return None
+                    return tail_first
+
+                inline_stmt = _inline_stmt_after_if_multiline(header_join)
                 if inline_stmt:
-                    # ✅ inline stmt 내부의 "else"를 pseudo-lines로 분해
+                    # inline stmt 내부의 "else"도 분해 지원
                     temp_lines = _split_inline_if_else(inline_stmt)
 
 
