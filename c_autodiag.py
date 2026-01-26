@@ -3255,9 +3255,13 @@ class StructuredFlowEmitter:
                         break
 
                 # 내용이 사실상 없는 그룹이면 각 case 를 그냥 merge 로 보냄
-                if case_body_start >= case_body_end or _block_is_effectively_empty(
-                    lines, case_body_start, case_body_end
-                ):
+                # 단, 대표 case 헤더 라인에 inline statement가 있으면(예: case 0: r+=10; break;)
+                # 여기서 continue 하면 inline 노드 생성이 스킵되므로 예외 처리한다.
+                has_inline = bool(case_inline_map.get(main_header))
+
+                if (case_body_start >= case_body_end or _block_is_effectively_empty(
+                        lines, case_body_start, case_body_end
+                    )) and (not has_inline):
                     for h in group:
                         self.add(f"{case_nodes[h]} --> {merge}")
                     continue
@@ -3266,6 +3270,7 @@ class StructuredFlowEmitter:
                 inline_first = None
                 inline_last = main_case_id
                 terminated_by_inline_stop = False
+                inline_already_to_merge = False
 
                 for stmt in case_inline_map.get(main_header, []):
                     sid = self.nid()
@@ -3280,6 +3285,7 @@ class StructuredFlowEmitter:
                     # (중요) switch 안 break는 after-switch(merge)로 보내고, 이후 body는 파싱하지 않음
                     if re.match(r"^\s*break\b", stmt):
                         self.add(f"{sid} --> {merge}")
+                        inline_already_to_merge = True
                         terminated_by_inline_stop = True
                         break
                     if re.match(r"^\s*(return|goto)\b", stmt):
@@ -3354,6 +3360,7 @@ class StructuredFlowEmitter:
 
                 # 3) 대표 case body 끝에서 merge 로 연결 (예: break; 등)
                 if (
+                    (not inline_already_to_merge) and
                     exit_node is not None
                     and not self._is_loop_control_node(exit_node)
                     and exit_node not in self.goto_nodes
