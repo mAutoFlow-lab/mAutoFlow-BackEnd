@@ -67,6 +67,26 @@ def _clip(v: str | None, n: int = 120) -> str | None:
     v = str(v)
     return v if len(v) <= n else (v[:n] + "...")
 
+
+def lemon_mode() -> str:
+    m = (os.getenv("LEMON_MODE") or "live").strip().lower()
+    return "test" if m == "test" else "live"
+
+def lemon_webhook_secret() -> str:
+    # ✅ 새 변수 우선
+    if lemon_mode() == "test":
+        s = (os.getenv("LEMON_WEBHOOK_SECRET_TEST") or "").strip()
+        if s:
+            return s
+    s = (os.getenv("LEMON_WEBHOOK_SECRET_LIVE") or "").strip()
+    if s:
+        return s
+
+    # ✅ (호환) 기존 배포 변수가 남아있을 수 있으니 fallback
+    return (os.getenv("LEMON_WEBHOOK_API_LIVE") or "").strip()
+
+
+
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
     """
@@ -338,7 +358,7 @@ async def lemon_webhook(request: Request):
     #   아래처럼 여러 후보를 같이 체크하도록 해둠.
     # ==========================================================
     raw_body = await request.body()
-    webhook_secret = (os.getenv("LEMON_WEBHOOK_API_LIVE") or "").strip()
+    webhook_secret = lemon_webhook_secret()
     if webhook_secret:
         sig = (
             request.headers.get("X-Signature")
@@ -439,10 +459,12 @@ async def lemon_webhook(request: Request):
     plan_tier = LEMON_VARIANT_TO_TIER.get(variant_id, "free")
 
     payload = {
+        "env": lemon_mode(),
         "user_id": user_id,
         "lemon_subscription_id": str(subscription_id),  # 컬럼명 맞추기
         "variant_id": variant_id,
         "plan_tier": plan_tier,
+        "plan_name": plan_tier.title(),
         "status": "active" if status in ("active", "on_trial") else "cancelled",
         "is_trial": is_trial,
         "renews_at": renews_at,
@@ -455,7 +477,7 @@ async def lemon_webhook(request: Request):
     if event_name in ("subscription_created", "subscription_updated", "subscription_resumed"):
         db.table("subscriptions").upsert(
             payload,
-            on_conflict="lemon_subscription_id"
+            on_conflict="lemon_subscription_id,env"
         ).execute()
         print(f"[LEMON] subscription upsert: user={user_id}, tier={plan_tier}")
 
@@ -463,7 +485,7 @@ async def lemon_webhook(request: Request):
         payload["status"] = "cancelled"
         db.table("subscriptions").upsert(
             payload,
-            on_conflict="lemon_subscription_id"
+            on_conflict="lemon_subscription_id,env"
         ).execute()
         print(f"[LEMON] subscription cancelled: user={user_id}")
 
@@ -477,7 +499,9 @@ async def lemon_webhook(request: Request):
             "status": "active",
             "renews_at": renews_at,
             "updated_at": dt.datetime.utcnow().isoformat() + "Z",
-        }).eq("lemon_subscription_id", str(subscription_id)).execute()
+        }).eq("lemon_subscription_id", str(subscription_id)) \
+          .eq("env", lemon_mode()) \
+          .execute()
 
         print(f"[LEMON] subscription renewed: user={user_id}")
 
@@ -506,7 +530,7 @@ def get_user_subscription(user_id: str | None):
             db.table("subscriptions")
               .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,updated_at")
               .eq("user_id", user_id)
-              .eq("status", "active")
+              .eq("env", lemon_mode())
               .order("updated_at", desc=True)
               .limit(1)
               .execute()
