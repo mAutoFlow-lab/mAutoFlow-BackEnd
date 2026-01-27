@@ -77,6 +77,12 @@ def lemon_webhook_secret() -> str:
         return (os.getenv("LEMON_WEBHOOK_SECRET_TEST") or "").strip()
     return (os.getenv("LEMON_WEBHOOK_SECRET_LIVE") or "").strip()
 
+def lemon_api_key() -> str:
+    if lemon_mode() == "test":
+        return (os.getenv("LEMON_API_KEY_TEST") or "").strip()
+    return (os.getenv("LEMON_API_KEY_LIVE") or "").strip()
+
+
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
     """
@@ -538,6 +544,95 @@ async def lemon_webhook(request: Request):
         print(f"[LEMON] ignored event: {event_name}")
 
     return {"ok": True}
+
+
+@app.post("/api/billing/portal")
+async def create_billing_portal(request: Request):
+    """
+    로그인 유저의 Lemon Customer Portal URL을 발급해서 반환
+    - free 유저(구독 없음)는 portal이 없으므로 404
+    """
+    body = await request.json()
+    access_token = body.get("access_token")
+    return_url = body.get("return_url")  # (선택) UI에서 같이 보내지만 Lemon이 항상 쓰는 건 아님
+
+    token_info = verify_access_token(access_token)
+    user_id = token_info.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    db = get_supabase_client()
+
+    # ✅ 1) active 우선, 없으면 cancelled지만 ends_at 미래인 것(유효기간 남음) 선택
+    sub_row = None
+
+    resp = (
+        db.table("subscriptions")
+          .select("lemon_subscription_id,status,ends_at,renews_at,env,updated_at")
+          .eq("user_id", user_id)
+          .eq("env", lemon_mode())
+          .eq("status", "active")
+          .order("updated_at", desc=True)
+          .limit(1)
+          .execute()
+    )
+    rows = getattr(resp, "data", None) or []
+    if rows:
+        sub_row = rows[0]
+    else:
+        # cancelled라도 기간 남으면 portal 필요
+        now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        resp2 = (
+            db.table("subscriptions")
+              .select("lemon_subscription_id,status,ends_at,renews_at,env,updated_at")
+              .eq("user_id", user_id)
+              .eq("env", lemon_mode())
+              .eq("status", "cancelled")
+              .gt("ends_at", now_utc)
+              .order("ends_at", desc=True)
+              .limit(1)
+              .execute()
+        )
+        rows2 = getattr(resp2, "data", None) or []
+        if rows2:
+            sub_row = rows2[0]
+
+    if not sub_row or not sub_row.get("lemon_subscription_id"):
+        raise HTTPException(status_code=404, detail="No active subscription for portal")
+
+    lemon_sub_id = str(sub_row["lemon_subscription_id"])
+
+    # ✅ 2) Lemon API 호출해서 customer_portal URL 가져오기
+    api_key = lemon_api_key()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="LEMON_API_KEY_(LIVE/TEST) not configured")
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/vnd.api+json",
+        "Content-Type": "application/vnd.api+json",
+    }
+
+    r = requests.get(f"https://api.lemonsqueezy.com/v1/subscriptions/{lemon_sub_id}", headers=headers, timeout=15)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Lemon API error: {r.status_code} {r.text[:200]}")
+
+    data = r.json() or {}
+    attrs = ((data.get("data") or {}).get("attributes") or {})
+    urls = (attrs.get("urls") or {})
+
+    portal_url = (
+        urls.get("customer_portal")
+        or urls.get("customer_portal_url")
+        or attrs.get("customer_portal")
+        or attrs.get("customer_portal_url")
+    )
+    if not portal_url:
+        raise HTTPException(status_code=502, detail="Lemon portal url missing in API response")
+
+    # return_url은 Lemon이 항상 지원하는 파라미터가 아니라서
+    # 일단 그대로 반환만 (필요하면 추후 Lemon 문서 확인 후 붙이기)
+    return {"url": portal_url}
 
 
 def get_user_subscription(user_id: str | None):
