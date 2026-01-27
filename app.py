@@ -73,19 +73,9 @@ def lemon_mode() -> str:
     return "test" if m == "test" else "live"
 
 def lemon_webhook_secret() -> str:
-    # ✅ 새 변수 우선
     if lemon_mode() == "test":
-        s = (os.getenv("LEMON_WEBHOOK_SECRET_TEST") or "").strip()
-        if s:
-            return s
-    s = (os.getenv("LEMON_WEBHOOK_SECRET_LIVE") or "").strip()
-    if s:
-        return s
-
-    # ✅ (호환) 기존 배포 변수가 남아있을 수 있으니 fallback
-    return (os.getenv("LEMON_WEBHOOK_API_LIVE") or "").strip()
-
-
+        return (os.getenv("LEMON_WEBHOOK_SECRET_TEST") or "").strip()
+    return (os.getenv("LEMON_WEBHOOK_SECRET_LIVE") or "").strip()
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
@@ -359,6 +349,9 @@ async def lemon_webhook(request: Request):
     # ==========================================================
     raw_body = await request.body()
     webhook_secret = lemon_webhook_secret()
+    if not webhook_secret:
+        raise HTTPException(status_code=500, detail="LEMON webhook secret missing for current LEMON_MODE")
+    
     if webhook_secret:
         sig = (
             request.headers.get("X-Signature")
@@ -482,12 +475,44 @@ async def lemon_webhook(request: Request):
         print(f"[LEMON] subscription upsert: user={user_id}, tier={plan_tier}")
 
     elif event_name in ("subscription_cancelled", "subscription_expired"):
-        payload["status"] = "cancelled"
+        # ✅ 취소 이벤트에서는 variant_id가 비는 경우가 있어서,
+        # ✅ plan_tier/variant_id를 'free'로 덮어쓰지 않도록 기존 값을 유지한다.
+
+        # 기존 row 조회
+        prev = (
+            db.table("subscriptions")
+              .select("plan_tier, plan_name, variant_id")
+              .eq("lemon_subscription_id", str(subscription_id))
+              .eq("env", lemon_mode())
+              .limit(1)
+              .execute()
+        )
+        prev_rows = getattr(prev, "data", None) or []
+        prev_row = prev_rows[0] if prev_rows else {}
+
+        # status/끝나는 날짜만 갱신 (플랜 관련은 기존값 유지)
+        cancel_update = {
+            "env": lemon_mode(),
+            "user_id": user_id,
+            "lemon_subscription_id": str(subscription_id),
+            "status": "cancelled",
+            "ends_at": ends_at,
+            "renews_at": renews_at,
+            "trial_ends_at": trial_ends_at,
+            "is_trial": is_trial,
+            "updated_at": dt.datetime.utcnow().isoformat() + "Z",
+            # ✅ 유지
+            "plan_tier": prev_row.get("plan_tier") or "free",
+            "plan_name": prev_row.get("plan_name") or (prev_row.get("plan_tier") or "free").title(),
+            "variant_id": prev_row.get("variant_id"),
+        }
+
         db.table("subscriptions").upsert(
-            payload,
+            cancel_update,
             on_conflict="lemon_subscription_id,env"
         ).execute()
         print(f"[LEMON] subscription cancelled: user={user_id}")
+
 
     elif event_name == "subscription_payment_success":
         # ✅ 여기 도달 전에 subscription_id 방어가 있으니 안전하지만, 한 번 더 확실히
@@ -526,15 +551,37 @@ def get_user_subscription(user_id: str | None):
         return None
 
     try:
+        # 1) active 먼저
         resp = (
-            db.table("subscriptions")
-              .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,updated_at")
-              .eq("user_id", user_id)
-              .eq("env", lemon_mode())
-              .order("updated_at", desc=True)
-              .limit(1)
-              .execute()
+          db.table("subscriptions")
+            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,updated_at")
+            .eq("user_id", user_id)
+            .eq("env", lemon_mode())
+            .eq("status", "active")
+            .order("updated_at", desc=True)
+            .limit(1)
+            .execute()
         )
+        rows = getattr(resp, "data", None) or []
+        if rows:
+            return rows[0]
+
+        # 2) active 없으면, cancelled라도 ends_at이 미래면 유지
+        now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        resp2 = (
+          db.table("subscriptions")
+            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,updated_at")
+            .eq("user_id", user_id)
+            .eq("env", lemon_mode())
+            .eq("status", "cancelled")
+            .gt("ends_at", now_utc)
+            .order("ends_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows2 = getattr(resp2, "data", None) or []
+        return rows2[0] if rows2 else None
+
     except Exception as e:
         print("[SUBS] error querying subscriptions:", e)
         return None
