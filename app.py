@@ -635,6 +635,85 @@ async def create_billing_portal(request: Request):
     return {"url": portal_url}
 
 
+# ===========================
+# Subscription auto-cleanup
+# ===========================
+
+def _parse_iso_dt(s: str | None) -> dt.datetime | None:
+    """
+    Lemon/Supabase ISO datetime 문자열을 UTC aware datetime으로 파싱.
+    예: "2026-01-28T12:34:56Z", "2026-01-28T12:34:56+00:00"
+    """
+    if not s:
+        return None
+    try:
+        v = str(s).strip()
+        if v.endswith("Z"):
+            v = v.replace("Z", "+00:00")
+        d = dt.datetime.fromisoformat(v)
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=dt.timezone.utc)
+        return d.astimezone(dt.timezone.utc)
+    except Exception:
+        return None
+
+
+def _auto_downgrade_if_ended(db: Client, user_id: str) -> None:
+    """
+    ends_at이 지난 cancelled/active 구독 row가 DB에 남아있으면 free로 정리.
+    - webhook에 의존하지 않고 "사용자 재접속(API 호출)" 시점에 자동 정리
+    - 안전/멱등(idempotent): 이미 free면 아무 것도 안 함
+    """
+    now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
+
+    # 최신 row 하나만 보고 정리 (유저당 구독 1개 전제에 가장 부합)
+    resp = (
+        db.table("subscriptions")
+          .select("lemon_subscription_id,env,status,plan_tier,plan_name,ends_at,updated_at")
+          .eq("user_id", user_id)
+          .eq("env", lemon_mode())
+          .order("updated_at", desc=True)
+          .limit(1)
+          .execute()
+    )
+
+    rows = getattr(resp, "data", None) or []
+    if not rows:
+        return
+
+    row = rows[0]
+    plan_tier = (row.get("plan_tier") or "").lower()
+    status = (row.get("status") or "").lower()
+
+    # free면 정리할 필요 없음
+    if plan_tier == "free":
+        return
+
+    ends_at_dt = _parse_iso_dt(row.get("ends_at"))
+    if not ends_at_dt:
+        return
+
+    # ends_at이 지났으면 -> free로 정리
+    if ends_at_dt <= now_utc:
+        lemon_sub_id = row.get("lemon_subscription_id")
+        if not lemon_sub_id:
+            return  # 안전장치
+
+        update_payload = {
+            "plan_tier": "free",
+            "plan_name": "Free tier",
+            "status": "expired",  # cancelled 유지보다 명확
+            "updated_at": dt.datetime.utcnow().isoformat() + "Z",
+        }
+
+        db.table("subscriptions").update(update_payload) \
+          .eq("lemon_subscription_id", str(lemon_sub_id)) \
+          .eq("env", lemon_mode()) \
+          .execute()
+
+        print(f"[SUBS] auto-downgraded ended subscription -> free (user={user_id}, sub={lemon_sub_id})")
+
+
 def get_user_subscription(user_id: str | None):
     if not user_id:
         return None
@@ -644,6 +723,13 @@ def get_user_subscription(user_id: str | None):
     except Exception as e:
         print("[SUBS] get_supabase_client failed:", e)
         return None
+
+    # ✅ (추가) ends_at 지난 cancelled 구독이 DB에 남아있으면 free로 자동 정리
+    try:
+        _auto_downgrade_if_ended(db, user_id)
+    except Exception as e:
+        # 정리 실패는 서비스 실패로 만들지 않고, 일단 기존 판정 로직은 계속 수행
+        print("[SUBS] auto downgrade failed:", e)
 
     try:
         # 1) active 먼저
