@@ -663,17 +663,20 @@ def _auto_downgrade_if_ended(db: Client, user_id: str) -> None:
     ends_at이 지난 cancelled/active 구독 row가 DB에 남아있으면 free로 정리.
     - webhook에 의존하지 않고 "사용자 재접속(API 호출)" 시점에 자동 정리
     - 안전/멱등(idempotent): 이미 free면 아무 것도 안 함
+    - 유저당 row가 여러 개 남아있는 케이스(중복 cancelled/expired/active)를 고려해서
+      최신 1개만 보지 않고, 유효하지 않은 paid row들을 모두 정리한다.
+    - cancelled 인데 ends_at 이 NULL 인 row는 "이미 종료"로 간주하고 free로 정리한다.
     """
     now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
 
-    # 최신 row 하나만 보고 정리 (유저당 구독 1개 전제에 가장 부합)
+    # paid row 후보들을 넉넉히 가져와서 정리 (최대 10개)
     resp = (
         db.table("subscriptions")
           .select("lemon_subscription_id,env,status,plan_tier,plan_name,ends_at,updated_at")
           .eq("user_id", user_id)
           .eq("env", lemon_mode())
           .order("updated_at", desc=True)
-          .limit(1)
+          .limit(10)
           .execute()
     )
 
@@ -681,23 +684,26 @@ def _auto_downgrade_if_ended(db: Client, user_id: str) -> None:
     if not rows:
         return
 
-    row = rows[0]
-    plan_tier = (row.get("plan_tier") or "").lower()
-    status = (row.get("status") or "").lower()
-
-    # free면 정리할 필요 없음
-    if plan_tier == "free":
-        return
-
-    ends_at_dt = _parse_iso_dt(row.get("ends_at"))
-    if not ends_at_dt:
-        return
-
-    # ends_at이 지났으면 -> free로 정리
-    if ends_at_dt <= now_utc:
+    for row in rows:
         lemon_sub_id = row.get("lemon_subscription_id")
         if not lemon_sub_id:
-            return  # 안전장치
+            continue
+
+        plan_tier = (row.get("plan_tier") or "").lower()
+        status = (row.get("status") or "").lower()
+        if plan_tier == "free":
+            continue
+
+        ends_at_dt = _parse_iso_dt(row.get("ends_at"))
+
+        # (1) cancelled인데 ends_at NULL -> 종료로 간주
+        should_downgrade = (status == "cancelled" and ends_at_dt is None)
+        # (2) ends_at이 있고 이미 지남 -> 종료
+        if ends_at_dt is not None and ends_at_dt <= now_utc:
+            should_downgrade = True
+
+        if not should_downgrade:
+            continue
 
         update_payload = {
             "plan_tier": "free",
@@ -732,30 +738,47 @@ def get_user_subscription(user_id: str | None):
         print("[SUBS] auto downgrade failed:", e)
 
     try:
-        # 1) active 먼저
+        now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc)
+
+        # 1) active 후보들을 최신순으로 가져와서,
+        #    ends_at이 지난 row는 expired/free로 정리 후 다음 row를 본다.
         resp = (
           db.table("subscriptions")
-            .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,updated_at")
+            .select("lemon_subscription_id,plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,updated_at")
             .eq("user_id", user_id)
             .eq("env", lemon_mode())
             .eq("status", "active")
             .order("updated_at", desc=True)
-            .limit(1)
+            .limit(5)
             .execute()
         )
         rows = getattr(resp, "data", None) or []
-        if rows:
-            return rows[0]
+        for r in rows:
+            ends_at_dt = _parse_iso_dt(r.get("ends_at"))
+            if ends_at_dt is not None and ends_at_dt <= now_utc:
+                # active인데 ends_at 지남 -> expired/free로 정리
+                lemon_sub_id = r.get("lemon_subscription_id")
+                if lemon_sub_id:
+                    db.table("subscriptions").update({
+                        "plan_tier": "free",
+                        "plan_name": "Free tier",
+                        "status": "expired",
+                        "updated_at": dt.datetime.utcnow().isoformat() + "Z",
+                    }).eq("lemon_subscription_id", str(lemon_sub_id)) \
+                      .eq("env", lemon_mode()) \
+                      .execute()
+                continue
+            return r
 
         # 2) active 없으면, cancelled라도 ends_at이 미래면 유지
-        now_utc = dt.datetime.utcnow().replace(tzinfo=dt.timezone.utc).isoformat().replace("+00:00", "Z")
+        now_utc_iso = now_utc.isoformat().replace("+00:00", "Z")
         resp2 = (
           db.table("subscriptions")
             .select("plan_name,plan_tier,status,is_trial,trial_ends_at,renews_at,ends_at,updated_at")
             .eq("user_id", user_id)
             .eq("env", lemon_mode())
             .eq("status", "cancelled")
-            .gt("ends_at", now_utc)
+            .gt("ends_at", now_utc_iso)
             .order("ends_at", desc=True)
             .limit(1)
             .execute()
@@ -1748,6 +1771,24 @@ async def export_diagram(
         print("[EXPORT] failed:", repr(e))
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/plan")
+async def get_my_plan(access_token: str = Form(...)):
+    token_info = verify_access_token(access_token)
+    user_id = token_info.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Invalid token: no user_id")
+
+    plan = get_user_plan(user_id)
+    plan_tier = plan.get("plan_tier", "free")
+    return {
+        **plan,
+        "is_pro_user": plan_tier in ("pro", "expert", "unlimited"),
+        "daily_free_limit": DAILY_FREE_LIMIT,
+        "free_node_limit": FREE_NODE_LIMIT,
+    }
+
 
 @app.get("/usage")
 async def get_usage(user_id: str):
